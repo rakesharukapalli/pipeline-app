@@ -1,0 +1,21 @@
+{
+  "name": "Pipeline - Growth & Partnerships",
+  "short_name": "Pipeline",
+  "description": "Sales pipeline on your SharePoint workbook",
+  "start_url": "./#/today",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1F3A5F",
+  "theme_color": "#1F3A5F",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Log a touch", "url": "./#/today"},
+    {"name": "Outreach counter", "url": "./#/outreach"},
+    {"name": "Stand-up", "url": "./#/standup"}
+  ]
+}
