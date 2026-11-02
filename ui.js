@@ -1089,7 +1089,7 @@
   setInterval(syncPill, 30000);
 
   function loginScreen(err) {
-    $("#app").innerHTML = `<div class="login"><img src="icons/icon-192.png" alt=""><h1>Pipeline</h1><p>Growth & Partnerships sales pipeline - live on your SharePoint workbook.</p>
+    $("#app").innerHTML = `<div class="login"><img src="icon-192.png" alt=""><h1>Pipeline</h1><p>Growth & Partnerships sales pipeline - live on your SharePoint workbook.</p>
       <button class="btn" id="signin">Sign in with Microsoft</button>${err ? `<p style="font-size:13px;margin-top:14px">${esc(err)}</p>` : ""}<a href="?demo=1">Try the demo</a></div>`;
     $("#signin").onclick = () => B.signIn();
   }

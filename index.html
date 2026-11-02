@@ -10,21 +10,42 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Pipeline">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon-192.png">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="css/app.css">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="app.css">
   <script>try{var t=localStorage.getItem('pp.theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+  <script>
+    // Startup diagnostics: if the app can't start, show why instead of a blank page.
+    window.__errs = [];
+    window.addEventListener('error', function (e) {
+      var t = e.target || {};
+      if (t.tagName === 'SCRIPT' || t.tagName === 'LINK') window.__errs.push('Could not load file: ' + (t.src || t.href));
+      else window.__errs.push((e.message || 'Error') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''));
+    }, true);
+    window.addEventListener('unhandledrejection', function (e) { window.__errs.push('Startup error: ' + ((e.reason && e.reason.message) || e.reason)); });
+    setTimeout(function () {
+      var app = document.getElementById('app');
+      if (!app || !app.querySelector('.spinner') || app.children.length > 1) return;
+      var errs = window.__errs.length ? window.__errs : ['No error captured - the app is still waiting for Microsoft sign-in to respond.'];
+      app.innerHTML = '<div style="font:15px/1.5 Arial,sans-serif;padding:24px;max-width:640px;margin:auto">' +
+        '<h2 style="color:#1F3A5F;margin-top:0">The app could not start</h2>' +
+        '<p>Please send a screenshot of this screen.</p><ul style="color:#C0392B">' +
+        errs.map(function (x) { return '<li>' + String(x).replace(/</g, '&lt;') + '</li>'; }).join('') + '</ul>' +
+        '<p style="color:#666;font-size:13px">Page: ' + location.href.replace(/</g, '&lt;') + '<br>Scripts loaded: config ' + !!window.APP_CONFIG + ', msal ' + !!window.msal + ', backend ' + !!window.Backend + ', store ' + !!window.Store + ', ui ' + !!window.UI + '</p>' +
+        '<p><a href="?demo=1">Try demo mode</a> &middot; <a href="#" onclick="localStorage.clear();sessionStorage.clear();location.href=location.pathname;return false">Reset and retry</a></p></div>';
+    }, 8000);
+  </script>
 </head>
 <body>
   <div id="app"><div class="spinner"></div></div>
   <div id="toast" class="toast"></div>
 
-  <script src="js/config.js"></script>
-  <script src="js/msal-browser.min.js"></script>
-  <script src="js/demo-data.js"></script>
-  <script src="js/graph.js"></script>
-  <script src="js/store.js"></script>
-  <script src="js/ui.js"></script>
+  <script src="config.js"></script>
+  <script src="msal-browser.min.js"></script>
+  <script src="demo-data.js"></script>
+  <script src="graph.js"></script>
+  <script src="store.js"></script>
+  <script src="ui.js"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js');
