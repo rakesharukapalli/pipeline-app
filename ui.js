@@ -1045,7 +1045,7 @@
   function shell() {
     $("#app").innerHTML = `
       <header class="top"><button class="back hidden" id="back" aria-label="Back">‹</button><h1 id="title">Pipeline</h1><button class="sync" id="sync"><i class="dot"></i><span id="synctxt"></span></button></header>
-      ${B.demo ? '<div style="max-width:860px;margin:10px auto 0;padding:0 12px"><div class="banner"><b>Demo mode</b> - sample data, nothing is saved to SharePoint. Add your Client ID in js/config.js to connect.</div></div>' : ""}
+      ${B.demo ? '<div style="max-width:860px;margin:10px auto 0;padding:0 12px"><div class="banner"><b>Demo mode</b> - sample data, nothing is saved. Set sheetsUrl in config.js to connect to your Google Sheet.</div></div>' : ""}
       <main id="view"></main>
       <nav class="bottom">
         <a href="#/today" data-nav="today">${I.today}Today</a><a href="#/pipeline" data-nav="pipeline">${I.board}Pipeline</a>
@@ -1089,7 +1089,7 @@
   setInterval(syncPill, 30000);
 
   function loginScreen(err) {
-    $("#app").innerHTML = `<div class="login"><img src="icon-192.png" alt=""><h1>Pipeline</h1><p>Growth & Partnerships sales pipeline - live on your SharePoint workbook.</p>
+    $("#app").innerHTML = `<div class="login"><img src="icon-192.png" alt=""><h1>Pipeline</h1><p>Growth & Partnerships sales pipeline - your live pipeline.</p>
       <button class="btn" id="signin">Sign in with Microsoft</button>${err ? `<p style="font-size:13px;margin-top:14px">${esc(err)}</p>` : ""}<a href="?demo=1">Try the demo</a></div>`;
     $("#signin").onclick = () => B.signIn();
   }
@@ -1104,7 +1104,7 @@
     render();
     Store.flush();
     setInterval(Store.poll, (C.pollSeconds || 20) * 1000);
-    if (S.status === "error" && !S.tables.pipeline) $("#view").innerHTML = `<div class="card"><b>Couldn't open the workbook.</b><p class="hint">${esc(S.error)}</p><p class="hint">Check that the file is still in SharePoint (General folder) and you have edit access. See SETUP.md, step 6.</p><button class="btn pri" onclick="location.reload()">Retry</button></div>`;
+    if (S.status === "error" && !S.tables.pipeline) $("#view").innerHTML = `<div class="card"><b>Couldn't open the workbook.</b><p class="hint">${esc(S.error)}</p><p class="hint">Check the web app is deployed with access = Anyone and sheetsUrl/token match. See SETUP-google.md.</p><button class="btn pri" onclick="location.reload()">Retry</button></div>`;
   }
   window.UI = { toast, render };
   boot();
