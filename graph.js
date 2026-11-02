@@ -3,8 +3,13 @@
 (function () {
   const C = window.APP_CONFIG;
   const GRAPH = "https://graph.microsoft.com/v1.0";
-  const SCOPES = ["User.Read", "Files.ReadWrite.All", "Calendars.ReadWrite"];
-  const WB = `/drives/${C.driveId}/items/${C.itemId}/workbook`;
+  // Personal OneDrive: file addressed by path under /me/drive, and the "Files.ReadWrite"
+  // scope (own files) needs no admin consent. Org SharePoint: addressed by drive+item id.
+  const PATH_MODE = !!C.workbookPath;
+  const SCOPES = ["User.Read", PATH_MODE ? "Files.ReadWrite" : "Files.ReadWrite.All", "Calendars.ReadWrite"];
+  const encPath = (p) => p.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const ITEM = PATH_MODE ? `/me/drive/root:/${encPath(C.workbookPath)}` : `/drives/${C.driveId}/items/${C.itemId}`;
+  const WB = PATH_MODE ? `${ITEM}:/workbook` : `${ITEM}/workbook`;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const encSheet = (s) => encodeURIComponent(s.replace(/'/g, "''"));
 
@@ -92,7 +97,7 @@
       return reqs.map((_, i) => out[String(i)]);
     }
     async meta() {
-      return this.call("GET", `/drives/${C.driveId}/items/${C.itemId}?$select=eTag,lastModifiedDateTime,lastModifiedBy,webUrl`);
+      return this.call("GET", `${ITEM}?$select=eTag,lastModifiedDateTime,lastModifiedBy,webUrl`);
     }
     // tables: {key: {table}}  -> {key: {address, values}} ; settings + lists
     async loadAll(tables) {
@@ -201,6 +206,11 @@
     async createEvent(ev) { console.log("demo event", ev); return { id: "demo" }; }
   }
 
-  const demo = /[?&]demo=1/.test(location.search) || !C.clientId || C.clientId.startsWith("PASTE");
-  window.Backend = demo ? new DemoBackend() : new GraphBackend();
+  const forceDemo = /[?&]demo=1/.test(location.search);
+  const hasSheets = C.sheetsUrl && !/PASTE/.test(C.sheetsUrl);
+  const hasGraph = C.clientId && !C.clientId.startsWith("PASTE");
+  window.Backend = forceDemo ? new DemoBackend()
+    : hasSheets ? new window.SheetsBackend()
+    : hasGraph ? new GraphBackend()
+    : new DemoBackend();
 })();
