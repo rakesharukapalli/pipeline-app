@@ -55,6 +55,7 @@
     sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>',
     xl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l8 8M16 8l-8 8"/></svg>',
     target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>',
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
   };
 
   // ------------------------------------------------------------------ toast / sheet
@@ -1041,10 +1042,44 @@
     });
   }
 
+  // ------------------------------------------------------------------ global search
+  function gsResults(q) {
+    q = q.trim().toLowerCase();
+    if (!q) return '<div class="empty">Type a name, company, phone, city, role, BU...</div>';
+    const hit = (s) => String(s == null ? "" : s).toLowerCase().includes(q);
+    const out = [];
+    const D1 = deals().filter((r) => [r.Account, r.Contact, r.Designation, r.City, r.Notes, r["Next Step"], r.Phone, r.Email, r.Source, r["Service Line"]].some(hit)).slice(0, 40);
+    if (D1.length) out.push(`<div class="sec"><h2>Pipeline</h2><span class="count">${D1.length}</span></div>` + D1.map((r) =>
+      `<div class="card deal gsrow" data-go="#/deal/${encodeURIComponent(r["Deal ID"])}">${tempDot(r.Temperature)}<div class="main"><div class="t1"><span>${esc(r.Account)}</span></div><div class="t2">${esc(r.Contact)}${r.Designation ? " · " + esc(r.Designation) : ""}</div><div class="meta"><span class="chip stage">${esc(r.Stage || "-")}</span>${r.City ? `<span class="chip">${esc(r.City)}</span>` : ""}</div></div></div>`).join(""));
+    const A1 = live("accounts").filter((a) => [a.Account, a.Notes, a["Current Stage"], a["AM Owner"]].some(hit)).slice(0, 20);
+    if (A1.length) out.push(`<div class="sec"><h2>Clients & logos</h2><span class="count">${A1.length}</span></div>` + A1.map((a) =>
+      `<div class="card deal gsrow" data-go="#/clients/${encodeURIComponent(a.Account)}"><div class="main"><div class="t1"><span>${esc(a.Account)}</span></div><div class="t2">${esc(a["Account Type"])} · ${esc(a["Current Stage"])}</div></div></div>`).join(""));
+    const C1 = live("contacts").filter((c) => [c.SPOC, c.Client, c.BU, c["S-BU"], c.Role, c.Phone, c.Email, c.City].some(hit)).slice(0, 25);
+    if (C1.length) out.push(`<div class="sec"><h2>Client contacts</h2><span class="count">${C1.length}</span></div>` + C1.map((c) =>
+      `<div class="card deal"><div class="main"><div class="t1"><span>${esc(c.SPOC)}</span></div><div class="t2">${esc(c.Client)}${c.BU ? " · " + esc(c.BU) : ""}${c.Role ? " · " + esc(c.Role) : ""}</div><div class="acts">${telLink(c.Phone) ? `<a class="btn" href="${telLink(c.Phone)}">Call</a>` : ""}${waLink(c.Phone) ? `<a class="btn" href="${waLink(c.Phone)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${c.Email ? `<a class="btn" href="mailto:${esc(c.Email)}">Email</a>` : ""}<button class="pri" data-act="ctouch" data-sig='${esc(c._sig)}'>Log</button></div></div></div>`).join(""));
+    const L1 = live("leads").filter((l) => [l.Name, l.Organization, l.Designation, l.Event, l.Email, l.Phone, l.Location].some(hit)).slice(0, 25);
+    if (L1.length) out.push(`<div class="sec"><h2>Leads</h2><span class="count">${L1.length}</span></div>` + L1.map((l) =>
+      `<div class="card deal"><div class="main"><div class="t1"><span>${esc(l.Name)}</span></div><div class="t2">${esc(l.Organization)}${l.Designation ? " · " + esc(l.Designation) : ""}</div><div class="meta"><span class="chip">${esc(l.Event || "")}</span>${l.Response ? `<span class="chip ${l.Response === "Positive" ? "ok" : ""}">${esc(l.Response)}</span>` : ""}</div><div class="acts">${telLink(l.Phone) ? `<a class="btn" href="${telLink(l.Phone)}">Call</a>` : ""}${l.Email ? `<a class="btn" href="mailto:${esc(l.Email)}">Email</a>` : ""}${deals().some((d) => d.Account === l.Organization) ? "" : `<button class="pri" data-act="lead2pipe" data-sig='${esc(l._sig)}'>→ Pipeline</button>`}</div></div></div>`).join(""));
+    return out.length ? out.join("") : `<div class="empty">Nothing matches "${esc(q)}".</div>`;
+  }
+  function globalSearch() {
+    const html = `<input class="search" id="gq" placeholder="Search deals, contacts, leads, clients..." autocomplete="off" style="width:100%;margin-bottom:8px"><div id="gres"></div>`;
+    const { el, close } = sheet("Search", html, (el) => {
+      const inp = $("#gq", el), res = $("#gres", el);
+      res.innerHTML = gsResults("");
+      inp.addEventListener("input", () => { res.innerHTML = gsResults(inp.value); });
+      el.addEventListener("click", (e) => {
+        const go = e.target.closest(".gsrow[data-go]");
+        if (go) { close(); location.hash = go.dataset.go; }
+      });
+      setTimeout(() => inp.focus(), 250);
+    });
+  }
+
   // ------------------------------------------------------------------ shell + router
   function shell() {
     $("#app").innerHTML = `
-      <header class="top"><button class="back hidden" id="back" aria-label="Back">‹</button><h1 id="title">Pipeline</h1><button class="sync" id="sync"><i class="dot"></i><span id="synctxt"></span></button></header>
+      <header class="top"><button class="back hidden" id="back" aria-label="Back">‹</button><h1 id="title">Pipeline</h1><button class="iconbtn" id="gsearch" aria-label="Search">${I.search}</button><button class="sync" id="sync"><i class="dot"></i><span id="synctxt"></span></button></header>
       ${B.demo ? '<div style="max-width:860px;margin:10px auto 0;padding:0 12px"><div class="banner"><b>Demo mode</b> - sample data, nothing is saved. Set sheetsUrl in config.js to connect to your Google Sheet.</div></div>' : ""}
       <main id="view"></main>
       <nav class="bottom">
@@ -1053,6 +1088,7 @@
         <a href="#/outreach" data-nav="outreach">${I.out}Outreach</a><a href="#/more" data-nav="more">${I.more}More</a>
       </nav>`;
     $("#back").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/today"));
+    $("#gsearch").onclick = globalSearch;
     $("#sync").onclick = () => { Store.flush().then(() => Store.refresh()); toast("Syncing with the sheet..."); };
   }
   function syncPill() {
