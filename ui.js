@@ -197,6 +197,9 @@
     const incDays = setting("IncentiveDays", 60), warn = setting("IncentiveWarn", 15);
     const inc = live("accounts").filter((a) => isNum(a["First Resource Deployed Date"]) && t - a["First Resource Deployed Date"] >= incDays - warn && t - a["First Resource Deployed Date"] <= incDays + 30);
     const clients = live("accounts").filter((a) => a["Account Type"] === "Client in Progress" && (!isNum(a["Next Step Date"]) || a["Next Step Date"] <= t));
+    const dAll = live("delivery");
+    const dDue = dAll.filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]) && c["Next Follow-up"] <= t).sort((a, b) => a["Next Follow-up"] - b["Next Follow-up"]);
+    const dIv = dAll.filter((c) => dActive(c.Status) && isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7).sort((a, b) => a["Interview Date"] - b["Interview Date"]);
     const agenda = agendaKey();
     const hot = ds.filter(({ r, x }) => x.open && r.Temperature === "Hot").length;
     const out = outreachWeek(D.weekStart(t));
@@ -227,7 +230,10 @@
       ${section("Your commitments", commits.slice(0, 5).map(commitCard))}
       ${section("Needs your approval (below margin)", approvals.map(propCard), "bad")}
       ${section("Logo incentive watch", inc.map(accCard))}
-      ${!overdue.length && !dueToday.length && !noNext.length && !upcoming.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
+      ${dDue.length || dIv.length ? `<div class="sec"><h2>Delivery</h2><a href="#/delivery" style="font-size:12px;font-weight:600">Open ›</a></div>` : ""}
+      ${section("Delivery - interviews this week", dIv.map(dCandCard))}
+      ${section("Delivery - follow-ups due", dDue.map(dCandCard), "warn")}
+      ${!overdue.length && !dueToday.length && !noNext.length && !upcoming.length && !dDue.length && !dIv.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
     return { title: "Today", html };
   };
 
@@ -1050,16 +1056,27 @@
   }
 
   // ================================================================ DELIVERY (recruitment)
-  const DSTATUS = ["Screening FB", "Screen Reject", "TA Rejection", "Duplicate", "Dropped", "No Show",
-    "L1 - To Schedule", "L1 Scheduled", "L1 FB Pending", "L1 Reject", "L1 Declined", "On Hold",
-    "L2 Scheduled", "L2 FB Pending", "L2 Reject", "L2 Declined", "Offered", "Joined", "Position Closed"];
-  const STAGE_OF = { "Screening FB": "Screening", "Screen Reject": "Screening", "TA Rejection": "Screening", "Duplicate": "Screening", "Dropped": "Screening", "No Show": "Screening",
+  // Master status list + colours mirror the sheet's Base tab / conditional formatting.
+  const DSTATUS_COLOR = {
+    "TA - To Share": "DEEAF6", "TA Shared": "DEEAF6", "TA Rejection": "F4CCCC",
+    "Screening FB": "EEF3F8", "Screen Reject": "F4CCCC", "Dropped": "D9D9D9", "No Show": "D9D9D9", "Duplicate": "D9D9D9",
+    "L1 - To Schedule": "DEEAF6", "L1 Scheduled": "BDD7EE", "L1 FB Pending": "FFE699", "L1 Reject": "F4CCCC", "L1 Declined": "F4CCCC",
+    "L2 - To Schedule": "DEEAF6", "L2 Scheduled": "BDD7EE", "L2 FB Pending": "FFE699", "L2 Reject": "F4CCCC", "L2 Declined": "F4CCCC",
+    "L3 - To Schedule": "DEEAF6", "L3 Scheduled": "BDD7EE", "L3 FB Pending": "FFE699", "L3 Reject": "F4CCCC",
+    "Final Select": "C6EFCE", "Offer Accepted": "9BD6A3", "Offer Declined": "F4CCCC",
+    "On Hold": "FFF2CC", "Position Closed": "D9D9D9", "Joined": "63BE7B" };
+  const DSTATUS = Object.keys(DSTATUS_COLOR);
+  const STAGE_OF = { "TA - To Share": "TA", "TA Shared": "TA", "TA Rejection": "TA",
+    "Screening FB": "Screening", "Screen Reject": "Screening", "Dropped": "Screening", "No Show": "Screening", "Duplicate": "Screening",
     "L1 - To Schedule": "L1", "L1 Scheduled": "L1", "L1 FB Pending": "L1", "L1 Reject": "L1", "L1 Declined": "L1",
-    "L2 Scheduled": "L2", "L2 FB Pending": "L2", "L2 Reject": "L2", "L2 Declined": "L2",
-    "Offered": "Offer", "Joined": "Joined", "Position Closed": "Closed", "On Hold": "On Hold" };
-  const STAGE_ORDER = ["Screening", "L1", "L2", "Offer", "Joined", "On Hold", "Closed"];
-  const DLOST = new Set(["Screen Reject", "TA Rejection", "Duplicate", "Dropped", "No Show", "L1 Reject", "L1 Declined", "L2 Reject", "L2 Declined", "Position Closed"]);
-  const SCHEDULED = new Set(["L1 - To Schedule", "L1 Scheduled", "L2 Scheduled"]);
+    "L2 - To Schedule": "L2", "L2 Scheduled": "L2", "L2 FB Pending": "L2", "L2 Reject": "L2", "L2 Declined": "L2",
+    "L3 - To Schedule": "L3", "L3 Scheduled": "L3", "L3 FB Pending": "L3", "L3 Reject": "L3",
+    "Final Select": "Offer", "Offer Accepted": "Offer", "Offer Declined": "Offer",
+    "On Hold": "On Hold", "Position Closed": "Closed", "Joined": "Joined" };
+  const STAGE_ORDER = ["TA", "Screening", "L1", "L2", "L3", "Offer", "Joined", "On Hold", "Closed"];
+  const DLOST = new Set(["TA Rejection", "Screen Reject", "Dropped", "No Show", "Duplicate", "L1 Reject", "L1 Declined", "L2 Reject", "L2 Declined", "L3 Reject", "Offer Declined", "Position Closed"]);
+  const SCHEDULED = new Set(["L1 - To Schedule", "L1 Scheduled", "L2 - To Schedule", "L2 Scheduled", "L3 - To Schedule", "L3 Scheduled"]);
+  const statusChip = (st) => { const c = DSTATUS_COLOR[st]; const dark = c && parseInt(c, 16) < 0x999999; return c ? `<span class="chip" style="background:#${c};color:${dark ? "#fff" : "#1a1a1a"}">${esc(st || "-")}</span>` : `<span class="chip">${esc(st || "-")}</span>`; };
   const dWon = (s) => s === "Joined";
   const dActive = (s) => !!s && !dWon(s) && !DLOST.has(s);
   const dcands = () => live("delivery");
@@ -1075,7 +1092,7 @@
       <i class="dotT ${dWon(st) ? "Hot" : DLOST.has(st) ? "" : "Warm"}"></i>
       <div class="main"><div class="t1"><span>${esc(c.Candidate)}</span>${c._pending ? '<span class="pend">• saving</span>' : ""}</div>
       <div class="t2">${esc(c.Role || "")}${c.Client ? " · " + esc(c.Client) : ""}</div>
-      <div class="meta"><span class="chip ${cls}">${esc(st || "-")}</span>${isNum(c["Expected CTC (LPA)"]) ? `<span class="chip">ECTC ${c["Expected CTC (LPA)"]}L</span>` : ""}${c["Notice Period"] ? `<span class="chip">${esc(c["Notice Period"])}</span>` : ""}${isNum(c["Next Follow-up"]) ? `<span class="chip ${c["Next Follow-up"] < today() ? "bad" : ""}">${esc(D.fmt(c["Next Follow-up"]))}</span>` : ""}</div>
+      <div class="meta">${statusChip(st)}${isNum(c["Interview Date"]) ? `<span class="chip ${c["Interview Date"] < today() ? "bad" : "stage"}">📅 ${esc(D.fmt(c["Interview Date"]))}</span>` : ""}${isNum(c["Expected CTC (LPA)"]) ? `<span class="chip">ECTC ${c["Expected CTC (LPA)"]}L</span>` : ""}${c["Notice Period"] ? `<span class="chip">${esc(c["Notice Period"])}</span>` : ""}${isNum(c["Next Follow-up"]) ? `<span class="chip ${c["Next Follow-up"] < today() ? "bad" : ""}">${esc(D.fmt(c["Next Follow-up"]))}</span>` : ""}</div>
       <div class="acts"><button class="pri" data-act="dlog" data-sig='${esc(c._sig)}'>Log / move</button>${c.Phone ? "" : ""}</div></div></div>`;
   }
   function dReqCard(r) {
@@ -1094,8 +1111,9 @@
     const active = cands.filter((c) => dActive(c.Status));
     const due = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t)
       .sort((a, b) => (a["Next Follow-up"] || 0) - (b["Next Follow-up"] || 0));
-    const interviews = cands.filter((c) => SCHEDULED.has(c.Status)).sort((a, b) => (a["Next Follow-up"] || 9e9) - (b["Next Follow-up"] || 9e9));
-    const offered = cands.filter((c) => c.Status === "Offered");
+    const ivKey = (c) => (isNum(c["Interview Date"]) ? c["Interview Date"] : isNum(c["Next Follow-up"]) ? c["Next Follow-up"] : 9e9);
+    const interviews = cands.filter((c) => SCHEDULED.has(c.Status) || isNum(c["Interview Date"])).filter((c) => dActive(c.Status)).sort((a, b) => ivKey(a) - ivKey(b));
+    const offered = cands.filter((c) => STAGE_OF[c.Status] === "Offer" && c.Status !== "Offer Declined");
     const joined = cands.filter((c) => dWon(c.Status));
     // funnel
     const stageN = (s) => cands.filter((c) => STAGE_OF[c.Status] === s).length;
@@ -1118,7 +1136,7 @@
       <div class="sec"><h2>Funnel</h2></div>
       <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of submitted</th></tr>
         ${convRow("Submitted", sub, sub)}${convRow("Reached L1", rL1, sub)}${convRow("Reached L2", rL2, sub)}${convRow("Offered", rOf, sub)}${convRow("Joined", rJn, sub)}</table>
-        <div class="hint" style="margin-top:8px">In play now: Screening ${stageN("Screening")} · L1 ${stageN("L1")} · L2 ${stageN("L2")} · Offer ${stageN("Offer")} · On hold ${stageN("On Hold")}</div></div>
+        <div class="hint" style="margin-top:8px">In play now: TA ${stageN("TA")} · Screening ${stageN("Screening")} · L1 ${stageN("L1")} · L2 ${stageN("L2")} · L3 ${stageN("L3")} · Offer ${stageN("Offer")} · On hold ${stageN("On Hold")}</div></div>
       <div id="d-due">${section("Follow-ups due", due.slice(0, 20).map(dCandCard), "warn", "No follow-ups due")}</div>
       <div id="d-int">${section("Interviews lined up", interviews.map(dCandCard), "", "No interviews scheduled")}</div>
       ${section("Offered", offered.map(dCandCard))}
@@ -1158,17 +1176,20 @@
 
   function dLog(c) {
     sheet("Update · " + c.Candidate, `
-      <div class="f"><label>Status</label>${chips("stg", ["Screening FB", "L1 - To Schedule", "L1 Scheduled", "L1 FB Pending", "L2 Scheduled", "L2 FB Pending", "Offered", "On Hold", "Joined"], SCHEDULED.has(c.Status) || c.Status === "Screening FB" ? c.Status : "")}</div>
+      <div class="f"><label>Quick move</label>${chips("stg", ["L1 Scheduled", "L1 FB Pending", "L2 Scheduled", "L2 FB Pending", "L3 Scheduled", "Final Select", "Offer Accepted", "On Hold", "Joined"], DSTATUS.includes(c.Status) ? c.Status : "")}</div>
       ${select("Or pick any status", "status", DSTATUS, c.Status, false)}
+      ${field("Interview date (if scheduled)", "iv", c["Interview Date"], "date")}
       ${field("Note (feedback / next step)", "notes", "", "textarea")}
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
+      <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal" checked></div>
       <button class="btn pri block" id="save">Save</button>`, (el, close) => {
       wireDateChips(el);
       $('.chips[data-name="stg"]', el).addEventListener("pick", (e) => { if (e.detail) $('[name="status"]', el).value = e.detail; });
       $("#save", el).onclick = () => {
         const f = form(el), t = today();
         const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
-        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
+        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
+        if (f.cal && isNum(f.iv)) API.event(reminderEvent(`Interview: ${c.Candidate} - ${c.Role || ""} (${c.Client || ""})`, f.iv, "10:00", `Candidate: ${esc(c.Candidate)}\nRole: ${esc(c.Role || "")}\nClient: ${esc(c.Client || "")}\nStatus: ${esc(f.status)}`, 60));
         close(); toast("Updated · " + c.Candidate); render();
       };
     });
@@ -1187,7 +1208,7 @@
       ${select("Status", "status", DSTATUS, c.Status, false)}
       <div class="f2">${field("Experience (yrs)", "Experience (yrs)", c["Experience (yrs)"], "number", 'step="0.1" inputmode="decimal"')}${field("Notice period", "Notice Period", c["Notice Period"])}</div>
       <div class="f2">${field("Current CTC (LPA)", "Current CTC (LPA)", c["Current CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}${field("Expected CTC (LPA)", "Expected CTC (LPA)", c["Expected CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}</div>
-      <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
+      <div class="f2">${field("Interview date", "Interview Date", c["Interview Date"], "date")}<div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div></div>
       ${field("Notes", "Notes", c.Notes, "textarea")}
       <button class="btn pri block" id="save">${isNew ? "Add candidate" : "Save"}</button>`, (el, close) => {
       wireDateChips(el);
@@ -1200,7 +1221,7 @@
         if (!f.Candidate) return toast("Candidate name is required", "warn");
         const rid = req ? req["Req ID"] : (pick && pick.value ? pick.value.split(" · ")[0] : c["Req ID"] || "");
         const v = { Candidate: f.Candidate, "Req ID": rid, Client: f.Client, Role: f.Role, SPOC: f.SPOC, Submitted: f.Submitted, Status: f.status,
-          "Next Follow-up": f.nf || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
+          "Next Follow-up": f.nf || "", "Interview Date": f["Interview Date"] || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
         if (isNew) API.add("delivery", v); else API.update("delivery", c, v);
         close(); toast("Saved"); render();
       };
