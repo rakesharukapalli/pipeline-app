@@ -946,7 +946,7 @@
   let installEvt = null;
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; });
   V.more = () => {
-    const tiles = [["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
@@ -1004,6 +1004,11 @@
         case "lead2pipe": { const l = bySig("leads", sig); return l && lead2pipe(l); }
         case "tdec": { const t = live("targets").find((x) => x.Account === a.dataset.n); if (t) { API.update("targets", t, { "Your Decision": a.dataset.v }); toast(t.Account + ": " + a.dataset.v); render(); } return; }
         case "ctouch": { const c = bySig("contacts", sig); return c && contactTouch(c); }
+        case "dcand": { const c = bySig("delivery", sig); return c && dCandForm(c); }
+        case "dlog": e.stopPropagation(); { const c = bySig("delivery", sig); return c && dLog(c); }
+        case "newcand": return dCandForm(null, a.dataset.req ? dreqs().find((r) => r["Req ID"] === a.dataset.req) : null);
+        case "newreq": return dReqForm(null);
+        case "editreq": return dReqForm(dreqs().find((r) => r["Req ID"] === a.dataset.id));
         case "syncnow": Store.flush().then(() => Store.refresh()); return toast("Syncing...");
         case "dropq": if (confirm("Discard changes that haven't reached the sheet?")) { S.queue.length = 0; localStorage.setItem("pp.queue.v1", "[]"); Store.refresh(); } return;
         case "install": installEvt && installEvt.prompt(); return;
@@ -1029,8 +1034,10 @@
       <div class="li" data-q="lead">${I.lead}<div class="main"><b>Event lead / scan card</b></div></div>
       <div class="li" data-q="prop">${I.rupee}<div class="main"><b>Proposal / rate card</b></div></div>
       <div class="li" data-q="req">${I.req}<div class="main"><b>Requirement</b></div></div>
-      <div class="li" data-q="commit">${I.flag}<div class="main"><b>Commitment</b></div></div></div>`, (el, close) => {
-      $(".list", el).onclick = (e) => { const li = e.target.closest(".li"); if (!li) return; close(); setTimeout(() => ({ log: pickDeal, deal: () => dealForm(null), meet: () => meetingForm(null), lead: () => (location.hash = "#/leads"), prop: () => propForm(null), req: () => reqForm(null), commit: () => commitForm(null) })[li.dataset.q](), 260); };
+      <div class="li" data-q="commit">${I.flag}<div class="main"><b>Commitment</b></div></div>
+      <div class="li" data-q="dcand">${I.people}<div class="main"><b>Delivery: add candidate</b></div></div>
+      <div class="li" data-q="dreq">${I.req}<div class="main"><b>Delivery: add requirement</b></div></div></div>`, (el, close) => {
+      $(".list", el).onclick = (e) => { const li = e.target.closest(".li"); if (!li) return; close(); setTimeout(() => ({ log: pickDeal, deal: () => dealForm(null), meet: () => meetingForm(null), lead: () => (location.hash = "#/leads"), prop: () => propForm(null), req: () => reqForm(null), commit: () => commitForm(null), dcand: () => dCandForm(null), dreq: () => dReqForm(null) })[li.dataset.q](), 260); };
     });
   }
   function pickDeal() {
@@ -1039,6 +1046,183 @@
     sheet("Who did you contact?", `<input class="search" id="dq" placeholder="Search name or company" style="width:100%;margin-bottom:8px" autofocus><div class="list" id="dl">${list("")}</div>`, (el, close) => {
       $("#dq", el).oninput = (e) => ($("#dl", el).innerHTML = list(e.target.value.toLowerCase()));
       $("#dl", el).onclick = (e) => { const li = e.target.closest(".li"); if (li) { close(); setTimeout(() => logTouch(dealById(li.dataset.id)), 260); } };
+    });
+  }
+
+  // ================================================================ DELIVERY (recruitment)
+  const DSTATUS = ["Screening FB", "Screen Reject", "TA Rejection", "Duplicate", "Dropped", "No Show",
+    "L1 - To Schedule", "L1 Scheduled", "L1 FB Pending", "L1 Reject", "L1 Declined", "On Hold",
+    "L2 Scheduled", "L2 FB Pending", "L2 Reject", "L2 Declined", "Offered", "Joined", "Position Closed"];
+  const STAGE_OF = { "Screening FB": "Screening", "Screen Reject": "Screening", "TA Rejection": "Screening", "Duplicate": "Screening", "Dropped": "Screening", "No Show": "Screening",
+    "L1 - To Schedule": "L1", "L1 Scheduled": "L1", "L1 FB Pending": "L1", "L1 Reject": "L1", "L1 Declined": "L1",
+    "L2 Scheduled": "L2", "L2 FB Pending": "L2", "L2 Reject": "L2", "L2 Declined": "L2",
+    "Offered": "Offer", "Joined": "Joined", "Position Closed": "Closed", "On Hold": "On Hold" };
+  const STAGE_ORDER = ["Screening", "L1", "L2", "Offer", "Joined", "On Hold", "Closed"];
+  const DLOST = new Set(["Screen Reject", "TA Rejection", "Duplicate", "Dropped", "No Show", "L1 Reject", "L1 Declined", "L2 Reject", "L2 Declined", "Position Closed"]);
+  const SCHEDULED = new Set(["L1 - To Schedule", "L1 Scheduled", "L2 Scheduled"]);
+  const dWon = (s) => s === "Joined";
+  const dActive = (s) => !!s && !dWon(s) && !DLOST.has(s);
+  const dcands = () => live("delivery");
+  const dreqs = () => live("deliveryReqs");
+  const candsFor = (id) => dcands().filter((c) => c["Req ID"] === id);
+  const fmtCTC = (n) => (isNum(n) ? n + " LPA" : "");
+  const nextReqId = () => { const n = dreqs().map((r) => +(String(r["Req ID"] || "").match(/\d+/) || [0])[0]); return "R-" + String(Math.max(0, ...n) + 1).padStart(3, "0"); };
+  const reqOpts = () => dreqs().slice().sort((a, b) => (a.Status === "Open" ? -1 : 1) - (b.Status === "Open" ? -1 : 1)).map((r) => `${r["Req ID"]} · ${r.Client} · ${r.Role}`);
+
+  function dCandCard(c) {
+    const st = c.Status || "", cls = dWon(st) ? "ok" : DLOST.has(st) ? "bad" : "warn";
+    return `<div class="card deal" data-act="dcand" data-sig='${esc(c._sig)}'>
+      <i class="dotT ${dWon(st) ? "Hot" : DLOST.has(st) ? "" : "Warm"}"></i>
+      <div class="main"><div class="t1"><span>${esc(c.Candidate)}</span>${c._pending ? '<span class="pend">• saving</span>' : ""}</div>
+      <div class="t2">${esc(c.Role || "")}${c.Client ? " · " + esc(c.Client) : ""}</div>
+      <div class="meta"><span class="chip ${cls}">${esc(st || "-")}</span>${isNum(c["Expected CTC (LPA)"]) ? `<span class="chip">ECTC ${c["Expected CTC (LPA)"]}L</span>` : ""}${c["Notice Period"] ? `<span class="chip">${esc(c["Notice Period"])}</span>` : ""}${isNum(c["Next Follow-up"]) ? `<span class="chip ${c["Next Follow-up"] < today() ? "bad" : ""}">${esc(D.fmt(c["Next Follow-up"]))}</span>` : ""}</div>
+      <div class="acts"><button class="pri" data-act="dlog" data-sig='${esc(c._sig)}'>Log / move</button>${c.Phone ? "" : ""}</div></div></div>`;
+  }
+  function dReqCard(r) {
+    const cs = candsFor(r["Req ID"]), active = cs.filter((c) => dActive(c.Status)).length, joined = cs.filter((c) => dWon(c.Status)).length;
+    const cls = { Open: "ok", "On Hold": "warn", Filled: "stage", Closed: "" }[r.Status] || "";
+    return `<div class="card deal" data-go="#/req/${encodeURIComponent(r["Req ID"])}"><div class="main">
+      <div class="t1"><span>${esc(r.Role)}</span></div>
+      <div class="t2">${esc(r.Client)}${r.SPOC ? " · " + esc(r.SPOC) : ""}${r.Budget ? " · " + esc(r.Budget) : ""}</div>
+      <div class="meta"><span class="chip ${cls}">${esc(r.Status || "Open")}</span><span class="chip">${cs.length} cand</span>${active ? `<span class="chip ok">${active} active</span>` : ""}${joined ? `<span class="chip ok">${joined} joined</span>` : ""}</div></div></div>`;
+  }
+
+  V.delivery = () => {
+    const t = today();
+    const reqs = dreqs(), cands = dcands();
+    const live_ = reqs.filter((r) => r.Status === "Open" || r.Status === "On Hold");
+    const active = cands.filter((c) => dActive(c.Status));
+    const due = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t)
+      .sort((a, b) => (a["Next Follow-up"] || 0) - (b["Next Follow-up"] || 0));
+    const interviews = cands.filter((c) => SCHEDULED.has(c.Status)).sort((a, b) => (a["Next Follow-up"] || 9e9) - (b["Next Follow-up"] || 9e9));
+    const offered = cands.filter((c) => c.Status === "Offered");
+    const joined = cands.filter((c) => dWon(c.Status));
+    // funnel
+    const stageN = (s) => cands.filter((c) => STAGE_OF[c.Status] === s).length;
+    const reached = (set) => cands.filter((c) => set.includes(STAGE_OF[c.Status])).length;
+    const sub = cands.length, rL1 = reached(["L1", "L2", "Offer", "Joined"]), rL2 = reached(["L2", "Offer", "Joined"]), rOf = reached(["Offer", "Joined"]), rJn = reached(["Joined"]);
+    const convRow = (lab, a, b) => `<tr><td>${lab}</td><td class="n">${a}</td><td class="n">${b ? Math.round(100 * a / b) + "%" : "-"}</td></tr>`;
+    // recruiter output
+    const bySpoc = {}; cands.forEach((c) => { const k = c.SPOC || "(none)"; (bySpoc[k] = bySpoc[k] || { s: 0, a: 0, j: 0 }); bySpoc[k].s++; if (dActive(c.Status)) bySpoc[k].a++; if (dWon(c.Status)) bySpoc[k].j++; });
+    const spocRows = Object.entries(bySpoc).sort((a, b) => b[1].s - a[1].s).slice(0, 10);
+    const byClient = {}; cands.forEach((c) => { const k = c.Client || "(none)"; (byClient[k] = byClient[k] || { s: 0, a: 0, j: 0 }); byClient[k].s++; if (dActive(c.Status)) byClient[k].a++; if (dWon(c.Status)) byClient[k].j++; });
+    const clientRows = Object.entries(byClient).sort((a, b) => b[1].s - a[1].s);
+    const empty = !reqs.length && !cands.length;
+    return {
+      title: "Delivery", back: true, html: empty ? `<div class="card"><b>No delivery data yet.</b><p class="hint">Import the two Delivery tabs into your sheet (see the delivery guide), or add a requirement below.</p><button class="btn pri" data-act="newreq">Add requirement</button></div>` : `
+      <div class="kpis"><button class="kpi" data-scroll="d-reqs"><div class="v">${live_.length}</div><div class="l">Open roles</div></button>
+        <button class="kpi" data-scroll="d-due"><div class="v">${active.length}</div><div class="l">Active cand.</div></button>
+        <button class="kpi ${due.length ? "warn" : ""}" data-scroll="d-due"><div class="v">${due.length}</div><div class="l">Follow-ups due</div></button>
+        <button class="kpi" data-scroll="d-int"><div class="v">${joined.length}</div><div class="l">Joined</div></button></div>
+      <div class="acts" style="margin-bottom:6px"><button class="pri" data-act="newcand">Add candidate</button><button data-act="newreq">Add requirement</button></div>
+      <div class="sec"><h2>Funnel</h2></div>
+      <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of submitted</th></tr>
+        ${convRow("Submitted", sub, sub)}${convRow("Reached L1", rL1, sub)}${convRow("Reached L2", rL2, sub)}${convRow("Offered", rOf, sub)}${convRow("Joined", rJn, sub)}</table>
+        <div class="hint" style="margin-top:8px">In play now: Screening ${stageN("Screening")} · L1 ${stageN("L1")} · L2 ${stageN("L2")} · Offer ${stageN("Offer")} · On hold ${stageN("On Hold")}</div></div>
+      <div id="d-due">${section("Follow-ups due", due.slice(0, 20).map(dCandCard), "warn", "No follow-ups due")}</div>
+      <div id="d-int">${section("Interviews lined up", interviews.map(dCandCard), "", "No interviews scheduled")}</div>
+      ${section("Offered", offered.map(dCandCard))}
+      ${section("Recently joined", joined.slice(-10).reverse().map(dCandCard))}
+      <div id="d-reqs" class="sec"><h2>Open roles</h2><span class="count">${live_.length}</span></div>
+      ${live_.map(dReqCard).join("") || '<div class="empty">No open roles</div>'}
+      <div class="sec"><h2>By recruiter</h2></div>
+      <div class="card"><table class="mini"><tr><th>SPOC</th><th class="n">Subm.</th><th class="n">Active</th><th class="n">Joined</th></tr>
+        ${spocRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.s}</td><td class="n">${v.a}</td><td class="n">${v.j}</td></tr>`).join("")}</table></div>
+      <div class="sec"><h2>By client</h2></div>
+      <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Subm.</th><th class="n">Active</th><th class="n">Joined</th></tr>
+        ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.s}</td><td class="n">${v.a}</td><td class="n">${v.j}</td></tr>`).join("")}</table></div>
+      ${section("All roles", reqs.filter((r) => !live_.includes(r)).map(dReqCard))}`,
+    };
+  };
+
+  V.req = (params, id) => {
+    const r = dreqs().find((x) => x["Req ID"] === decodeURIComponent(id));
+    if (!r) return { title: "Requirement", back: true, html: '<div class="empty">Requirement not found.</div>' };
+    const cs = candsFor(r["Req ID"]);
+    const groups = STAGE_ORDER.map((st) => [st, cs.filter((c) => STAGE_OF[c.Status] === st)]).filter(([, a]) => a.length);
+    const stCls = { Open: "ok", "On Hold": "warn", Filled: "stage", Closed: "" }[r.Status] || "";
+    return {
+      title: r.Role, back: true, html: `
+      <div class="hero"><h2>${esc(r.Role)}</h2><div class="sub">${esc(r.Client)}${r.SPOC ? " · " + esc(r.SPOC) : ""}${isNum(r["Req Received"]) ? " · recvd " + D.fmt(r["Req Received"], { abs: 1 }) : ""}</div>
+        <div class="chips"><span class="chip">${esc(r.Status || "Open")}</span>${r.Budget ? `<span class="chip">Budget: ${esc(r.Budget)}</span>` : ""}${r.Priority ? `<span class="chip">${esc(r.Priority)}</span>` : ""}<span class="chip">${cs.length} candidates</span></div></div>
+      <div class="acts" style="margin-bottom:8px"><button class="pri" data-act="newcand" data-req="${esc(r["Req ID"])}">Add candidate</button><button data-act="editreq" data-id="${esc(r["Req ID"])}">Edit role</button></div>
+      <div class="card"><div style="font-size:12px;color:var(--ink-3);margin-bottom:6px">ROLE STATUS</div>${chips("rstatus", ["Open", "On Hold", "Filled", "Closed"], r.Status || "Open")}</div>
+      ${r.Notes ? `<div class="card"><div class="kv"><div>Notes</div><div>${esc(r.Notes)}</div></div></div>` : ""}
+      ${groups.map(([st, arr]) => `<div class="sec"><h2>${esc(st)}</h2><span class="count">${arr.length}</span></div>${arr.map(dCandCard).join("")}`).join("") || '<div class="empty">No candidates yet. Add one above.</div>'}`,
+      mount: (el) => {
+        wireChips(el);
+        $('.chips[data-name="rstatus"]', el).addEventListener("pick", (e) => { if (e.detail) { API.update("deliveryReqs", r, { Status: e.detail }); toast("Role: " + e.detail); } });
+      },
+    };
+  };
+
+  function dLog(c) {
+    sheet("Update · " + c.Candidate, `
+      <div class="f"><label>Status</label>${chips("stg", ["Screening FB", "L1 - To Schedule", "L1 Scheduled", "L1 FB Pending", "L2 Scheduled", "L2 FB Pending", "Offered", "On Hold", "Joined"], SCHEDULED.has(c.Status) || c.Status === "Screening FB" ? c.Status : "")}</div>
+      ${select("Or pick any status", "status", DSTATUS, c.Status, false)}
+      ${field("Note (feedback / next step)", "notes", "", "textarea")}
+      <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
+      <button class="btn pri block" id="save">Save</button>`, (el, close) => {
+      wireDateChips(el);
+      $('.chips[data-name="stg"]', el).addEventListener("pick", (e) => { if (e.detail) $('[name="status"]', el).value = e.detail; });
+      $("#save", el).onclick = () => {
+        const f = form(el), t = today();
+        const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
+        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
+        close(); toast("Updated · " + c.Candidate); render();
+      };
+    });
+  }
+  function dCandForm(c, req) {
+    const isNew = !c;
+    c = c || { Status: "Screening FB", Submitted: today(), "Req ID": req ? req["Req ID"] : "", Client: req ? req.Client : "", Role: req ? req.Role : "", SPOC: req ? req.SPOC : "" };
+    const reqList = reqOpts();
+    const curReqLabel = c["Req ID"] ? (dreqs().find((r) => r["Req ID"] === c["Req ID"]) ? `${c["Req ID"]} · ${c.Client} · ${c.Role}` : c["Req ID"]) : "";
+    sheet(isNew ? "New candidate" : c.Candidate, `
+      ${field("Candidate *", "Candidate", c.Candidate)}
+      ${req ? `<div class="f"><label>Requirement</label><input value="${esc(curReqLabel)}" readonly></div>`
+        : `<div class="f"><label>Requirement</label><select name="reqpick"><option value="">— none / fill manually —</option>${reqList.map((o) => `<option ${o.indexOf(c["Req ID"] + " ") === 0 ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`}
+      <div class="f2">${field("Client", "Client", c.Client)}${field("Role", "Role", c.Role)}</div>
+      <div class="f2">${field("SPOC", "SPOC", c.SPOC)}${field("Submitted", "Submitted", c.Submitted, "date")}</div>
+      ${select("Status", "status", DSTATUS, c.Status, false)}
+      <div class="f2">${field("Experience (yrs)", "Experience (yrs)", c["Experience (yrs)"], "number", 'step="0.1" inputmode="decimal"')}${field("Notice period", "Notice Period", c["Notice Period"])}</div>
+      <div class="f2">${field("Current CTC (LPA)", "Current CTC (LPA)", c["Current CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}${field("Expected CTC (LPA)", "Expected CTC (LPA)", c["Expected CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}</div>
+      <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
+      ${field("Notes", "Notes", c.Notes, "textarea")}
+      <button class="btn pri block" id="save">${isNew ? "Add candidate" : "Save"}</button>`, (el, close) => {
+      wireDateChips(el);
+      const pick = $('[name="reqpick"]', el);
+      if (pick) pick.addEventListener("change", () => {
+        const m = pick.value.split(" · "); if (m.length >= 3) { const rr = dreqs().find((r) => r["Req ID"] === m[0]); if (rr) { $('[name="Client"]', el).value = rr.Client || ""; $('[name="Role"]', el).value = rr.Role || ""; $('[name="SPOC"]', el).value = rr.SPOC || ""; } }
+      });
+      $("#save", el).onclick = () => {
+        const f = form(el);
+        if (!f.Candidate) return toast("Candidate name is required", "warn");
+        const rid = req ? req["Req ID"] : (pick && pick.value ? pick.value.split(" · ")[0] : c["Req ID"] || "");
+        const v = { Candidate: f.Candidate, "Req ID": rid, Client: f.Client, Role: f.Role, SPOC: f.SPOC, Submitted: f.Submitted, Status: f.status,
+          "Next Follow-up": f.nf || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
+        if (isNew) API.add("delivery", v); else API.update("delivery", c, v);
+        close(); toast("Saved"); render();
+      };
+    });
+  }
+  function dReqForm(r) {
+    const isNew = !r;
+    r = r || { Status: "Open", "Req Received": today() };
+    sheet(isNew ? "New requirement" : r.Role, `
+      ${field("Role *", "Role", r.Role)}
+      <div class="f2">${field("Client", "Client", r.Client)}${field("SPOC", "SPOC", r.SPOC)}</div>
+      <div class="f2">${field("Req received", "Req Received", r["Req Received"], "date")}${field("Budget", "Budget", r.Budget)}</div>
+      <div class="f2">${select("Priority", "Priority", ["High", "Medium", "Low"], r.Priority)}${select("Status", "Status", ["Open", "On Hold", "Filled", "Closed"], r.Status, false)}</div>
+      ${field("Notes", "Notes", r.Notes, "textarea")}
+      <button class="btn pri block" id="save">${isNew ? "Add requirement" : "Save"}</button>`, (el, close) => {
+      $("#save", el).onclick = () => {
+        const f = form(el);
+        if (!f.Role) return toast("Role is required", "warn");
+        const v = { Client: f.Client, SPOC: f.SPOC, Role: f.Role, "Req Received": f["Req Received"], Budget: f.Budget, Priority: f.Priority, Status: f.Status, Notes: f.Notes };
+        if (isNew) { v["Req ID"] = nextReqId(); const row = API.add("deliveryReqs", v); close(); toast("Role added"); location.hash = "#/req/" + encodeURIComponent(v["Req ID"]); }
+        else { API.update("deliveryReqs", r, v); close(); toast("Saved"); render(); }
+      };
     });
   }
 
@@ -1060,6 +1244,8 @@
     const L1 = live("leads").filter((l) => [l.Name, l.Organization, l.Designation, l.Event, l.Email, l.Phone, l.Location].some(hit)).slice(0, 25);
     if (L1.length) out.push(`<div class="sec"><h2>Leads</h2><span class="count">${L1.length}</span></div>` + L1.map((l) =>
       `<div class="card deal"><div class="main"><div class="t1"><span>${esc(l.Name)}</span></div><div class="t2">${esc(l.Organization)}${l.Designation ? " · " + esc(l.Designation) : ""}</div><div class="meta"><span class="chip">${esc(l.Event || "")}</span>${l.Response ? `<span class="chip ${l.Response === "Positive" ? "ok" : ""}">${esc(l.Response)}</span>` : ""}</div><div class="acts">${telLink(l.Phone) ? `<a class="btn" href="${telLink(l.Phone)}">Call</a>` : ""}${l.Email ? `<a class="btn" href="mailto:${esc(l.Email)}">Email</a>` : ""}${deals().some((d) => d.Account === l.Organization) ? "" : `<button class="pri" data-act="lead2pipe" data-sig='${esc(l._sig)}'>→ Pipeline</button>`}</div></div></div>`).join(""));
+    const DC = live("delivery").filter((c) => [c.Candidate, c.Role, c.Client, c.SPOC, c.Status, c["Notice Period"], c.Notes].some(hit)).slice(0, 25);
+    if (DC.length) out.push(`<div class="sec"><h2>Delivery candidates</h2><span class="count">${DC.length}</span></div>` + DC.map(dCandCard).join(""));
     return out.length ? out.join("") : `<div class="empty">Nothing matches "${esc(q)}".</div>`;
   }
   function globalSearch() {

@@ -17,6 +17,8 @@
     commitments: { sheet: "Commitments", table: "tblCommitments", dates: ["Stand-up Date", "Due Date"] },
     intel: { sheet: "Market Intel", table: "tblIntel", dates: ["Date"] },
     contacts: { sheet: "Client Contacts", table: "tblClientContacts", dates: ["Last Follow-up", "Next Follow-up"] },
+    deliveryReqs: { sheet: "Delivery Reqs", table: "tblDeliveryReqs", key: "Req ID", dates: ["Req Received"], optional: true },
+    delivery: { sheet: "Delivery", table: "tblDelivery", dates: ["Submitted", "Last Follow-up", "Next Follow-up"], optional: true },
     activity: { sheet: "Activity Log", table: "tblActivity", dates: ["Date", "Next Step Date"], optional: true },
   };
   const ACTIVITY_HEADERS = ["Date", "Deal ID", "Account", "Contact", "Channel", "Outcome", "Notes", "Next Step", "Next Step Date", "Logged By"];

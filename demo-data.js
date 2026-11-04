@@ -17,9 +17,11 @@
     commitments: ["Stand-up Date","Commitment","Account","Owner","Due Date","Status","_Open","_Rank"],
     intel: ["Date","Account / Market","Insight","Implication","Action / Plan","Type","_Rec","_RecSeq","_Plan","_PlanSeq"],
     contacts: ["SPOC","Client","City","Country","BU","S-BU","Role","Last Follow-up","Next Follow-up","Status","Notes","Email","Phone","SPOC Manager","Comments","Days Since Contact"],
+    deliveryReqs: ["Req ID","Client","SPOC","Role","Req Received","Budget","Priority","Status","Notes"],
+    delivery: ["Candidate","Req ID","Client","Role","SPOC","Submitted","Status","Last Follow-up","Next Follow-up","Experience (yrs)","Notice Period","Current CTC (LPA)","Expected CTC (LPA)","Notes"],
     activity: ["Date","Deal ID","Account","Contact","Channel","Outcome","Notes","Next Step","Next Step Date","Logged By"],
   };
-  const SHEET = { pipeline: "Pipeline", accounts: "Clients & Logos", meetings: "Meetings", proposals: "Proposals & Rates", requirements: "Requirements", contracts: "Contracts", outreach: "Outreach Log", events: "Events & Referrals", leads: "Leads", targets: "Target Accounts", commitments: "Commitments", intel: "Market Intel", contacts: "Client Contacts", activity: "Activity Log" };
+  const SHEET = { pipeline: "Pipeline", accounts: "Clients & Logos", meetings: "Meetings", proposals: "Proposals & Rates", requirements: "Requirements", contracts: "Contracts", outreach: "Outreach Log", events: "Events & Referrals", leads: "Leads", targets: "Target Accounts", commitments: "Commitments", intel: "Market Intel", contacts: "Client Contacts", deliveryReqs: "Delivery Reqs", delivery: "Delivery", activity: "Activity Log" };
   const obj = (k, o) => H[k].map((h) => (o[h] === undefined ? "" : o[h]));
   const P = (id, a, c, des, city, src, svc, st, tmp, q, qd, hc, bill, lc, ns, nd, blk, notes, ph) =>
     obj("pipeline", { "Deal ID": id, Account: a, Contact: c, Designation: des, City: city, Source: src, "Service Line": svc, Stage: st, Temperature: tmp, "Qualified?": q, "Qualified Date": qd, "Est. Headcount": hc, "Est. Monthly Billing (INR)": bill, "Last Contact": lc, "Next Step": ns, "Next Step Date": nd, Blocker: blk, Notes: notes, Email: c.split(" ")[0].toLowerCase() + "@" + a.split(" ")[0].toLowerCase() + ".example", Phone: ph, Owner: "Demo" });
@@ -58,6 +60,17 @@
     commitments: [obj("commitments", { "Stand-up Date": T - 1, Commitment: "Close Contoso rate negotiation", Account: "Contoso Health", Owner: "Demo", "Due Date": T + 6, Status: "Committed" })],
     intel: [obj("intel", { Date: T - 4, "Account / Market": "GCCs", Insight: "BOT model in demand", Implication: "Lead with BOT", "Action / Plan": "BOT one-pager", Type: "Intel" }), obj("intel", { Date: T - 4, "Account / Market": "Pharma", Insight: "Budgets reopen in Q1", "Action / Plan": "January re-engagement", Type: "Next-month plan" })],
     contacts: [obj("contacts", { SPOC: "Lena Fox", Client: "Graphic Design Inst", City: "Pune", Country: "India", BU: "R&D", Role: "Engineering Manager", "Last Follow-up": T - 20, Status: "Active", Phone: "9800000099" })],
+    deliveryReqs: [
+      obj("deliveryReqs", { "Req ID": "R-001", Client: "Coho Logistics", SPOC: "Sam Rao", Role: "Senior Java Developer", "Req Received": T - 20, Budget: "20 LPA", Priority: "High", Status: "Open" }),
+      obj("deliveryReqs", { "Req ID": "R-002", Client: "Contoso Health", SPOC: "Ria Shah", Role: "QA Automation (Selenium)", "Req Received": T - 14, Budget: "5 Factor", Priority: "Medium", Status: "Open" }),
+      obj("deliveryReqs", { "Req ID": "R-003", Client: "Wide World Retail", SPOC: "Arjun Das", Role: "Data Engineer", "Req Received": T - 40, Budget: "18 LPA", Status: "Filled" })],
+    delivery: [
+      obj("delivery", { Candidate: "Imran Qureshi", "Req ID": "R-001", Client: "Coho Logistics", Role: "Senior Java Developer", SPOC: "Sam Rao", Submitted: T - 12, Status: "L2 Scheduled", "Next Follow-up": T + 1, "Experience (yrs)": 7, "Notice Period": "30 Days", "Current CTC (LPA)": 14, "Expected CTC (LPA)": 19 }),
+      obj("delivery", { Candidate: "Priya Nel", "Req ID": "R-001", Client: "Coho Logistics", Role: "Senior Java Developer", SPOC: "Sam Rao", Submitted: T - 10, Status: "L1 FB Pending", "Next Follow-up": T - 1, "Experience (yrs)": 6, "Notice Period": "Immediate", "Current CTC (LPA)": 12, "Expected CTC (LPA)": 17 }),
+      obj("delivery", { Candidate: "Rohan Mehta", "Req ID": "R-001", Client: "Coho Logistics", Role: "Senior Java Developer", SPOC: "Sam Rao", Submitted: T - 9, Status: "Screen Reject", "Experience (yrs)": 5, Notes: "CTC too high" }),
+      obj("delivery", { Candidate: "Lata Sinha", "Req ID": "R-002", Client: "Contoso Health", Role: "QA Automation (Selenium)", SPOC: "Ria Shah", Submitted: T - 8, Status: "Offered", "Next Follow-up": T + 2, "Experience (yrs)": 8, "Notice Period": "60 Days", "Current CTC (LPA)": 16, "Expected CTC (LPA)": 22 }),
+      obj("delivery", { Candidate: "Dev Anand", "Req ID": "R-002", Client: "Contoso Health", Role: "QA Automation (Selenium)", SPOC: "Ria Shah", Submitted: T - 6, Status: "On Hold", "Next Follow-up": T + 4, "Experience (yrs)": 4 }),
+      obj("delivery", { Candidate: "Nisha Varma", "Req ID": "R-003", Client: "Wide World Retail", Role: "Data Engineer", SPOC: "Arjun Das", Submitted: T - 35, Status: "Joined", "Experience (yrs)": 9, "Current CTC (LPA)": 18, "Expected CTC (LPA)": 24 })],
     activity: [obj("activity", { Date: T - 2, "Deal ID": "D-001", Account: "Northwind Bank GCC", Contact: "Asha Menon", Channel: "Call", Outcome: "Requirement shared", Notes: "12 Java devs, Q1", "Next Step": "Send rate card", "Next Step Date": T - 1, "Logged By": "Demo" })],
   };
   const out = {};
