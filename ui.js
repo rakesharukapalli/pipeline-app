@@ -1077,8 +1077,9 @@
   const DLOST = new Set(["TA Rejection", "Screen Reject", "Dropped", "No Show", "Duplicate", "L1 Reject", "L1 Declined", "L2 Reject", "L2 Declined", "L3 Reject", "Offer Declined", "Position Closed"]);
   const SCHEDULED = new Set(["L1 - To Schedule", "L1 Scheduled", "L2 - To Schedule", "L2 Scheduled", "L3 - To Schedule", "L3 Scheduled"]);
   const statusChip = (st) => { const c = DSTATUS_COLOR[st]; const dark = c && parseInt(c, 16) < 0x999999; return c ? `<span class="chip" style="background:#${c};color:${dark ? "#fff" : "#1a1a1a"}">${esc(st || "-")}</span>` : `<span class="chip">${esc(st || "-")}</span>`; };
+  const DPARKED = new Set(["On Hold"]); // client-held: not a live follow-up, not a loss
   const dWon = (s) => s === "Joined";
-  const dActive = (s) => !!s && !dWon(s) && !DLOST.has(s);
+  const dActive = (s) => !!s && !dWon(s) && !DLOST.has(s) && !DPARKED.has(s);
   const dcands = () => live("delivery");
   const dreqs = () => live("deliveryReqs");
   const candsFor = (id) => dcands().filter((c) => c["Req ID"] === id);
@@ -1107,7 +1108,7 @@
   V.delivery = () => {
     const t = today();
     const reqs = dreqs(), cands = dcands();
-    const live_ = reqs.filter((r) => r.Status === "Open" || r.Status === "On Hold");
+    const live_ = reqs.filter((r) => r.Status === "Open");
     const active = cands.filter((c) => dActive(c.Status));
     const due = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t)
       .sort((a, b) => (a["Next Follow-up"] || 0) - (b["Next Follow-up"] || 0));
@@ -1136,10 +1137,12 @@
       <div class="sec"><h2>Funnel</h2></div>
       <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of submitted</th></tr>
         ${convRow("Submitted", sub, sub)}${convRow("Reached L1", rL1, sub)}${convRow("Reached L2", rL2, sub)}${convRow("Offered", rOf, sub)}${convRow("Joined", rJn, sub)}</table>
-        <div class="hint" style="margin-top:8px">In play now: TA ${stageN("TA")} · Screening ${stageN("Screening")} · L1 ${stageN("L1")} · L2 ${stageN("L2")} · L3 ${stageN("L3")} · Offer ${stageN("Offer")} · On hold ${stageN("On Hold")}</div></div>
+        <div class="hint" style="margin-top:8px">In play now: TA ${stageN("TA")} · Screening ${stageN("Screening")} · L1 ${stageN("L1")} · L2 ${stageN("L2")} · L3 ${stageN("L3")} · Offer ${stageN("Offer")}</div>
+        <div class="hint">Closed: lost ${cands.filter((c) => DLOST.has(c.Status)).length} · client-parked (on hold) ${stageN("On Hold")}</div></div>
       <div id="d-due">${section("Follow-ups due", due.slice(0, 20).map(dCandCard), "warn", "No follow-ups due")}</div>
       <div id="d-int">${section("Interviews lined up", interviews.map(dCandCard), "", "No interviews scheduled")}</div>
       ${section("Offered", offered.map(dCandCard))}
+      ${section("On hold (client-parked · closed)", cands.filter((c) => DPARKED.has(c.Status)).map(dCandCard))}
       ${section("Recently joined", joined.slice(-10).reverse().map(dCandCard))}
       <div id="d-reqs" class="sec"><h2>Open roles</h2><span class="count">${live_.length}</span></div>
       ${live_.map(dReqCard).join("") || '<div class="empty">No open roles</div>'}
