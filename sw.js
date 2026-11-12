@@ -1,5 +1,5 @@
 // Offline app shell. Data never cached here (it lives in SharePoint + the app's local cache).
-const V = "pipeline-v9";
+const V = "pipeline-v10";
 const SHELL = ["./", "index.html", "css/app.css", "js/config.js", "js/msal-browser.min.js", "js/demo-data.js", "js/graph.js", "js/store.js", "js/ui.js",
   "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });

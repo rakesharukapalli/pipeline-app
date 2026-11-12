@@ -171,7 +171,7 @@
         ${r["Next Step"] ? `<div class="t3">→ ${esc(r["Next Step"])}</div>` : ""}
         <div class="meta"><span class="chip stage">${esc(r.Stage || "-")}</span>${followChip(x.follow, r["Next Step Date"])}${r.Blocker ? `<span class="chip">${esc(r.Blocker)}</span>` : ""}</div>
         ${opt.noActs ? "" : `<div class="acts">
-          <button class="pri" data-act="log" data-id="${esc(r["Deal ID"])}">Log touch</button>
+          <button class="pri" data-act="log" data-id="${esc(r["Deal ID"])}">Log</button>
           ${telLink(r.Phone) ? `<button data-act="call" data-id="${esc(r["Deal ID"])}">Call</button>` : ""}
           <button data-act="snooze" data-id="${esc(r["Deal ID"])}">Snooze</button>
         </div>`}
@@ -179,7 +179,7 @@
   }
   function section(title, items, cls = "", emptyMsg) {
     if (!items.length && !emptyMsg) return "";
-    return `<div class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${items.length}</span></div>${items.length ? items.join("") : `<div class="empty">${esc(emptyMsg)}</div>`}`;
+    return `<div class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${items.length}</span></div>${items.length ? `<div class="cardgrid">${items.join("")}</div>` : `<div class="empty">${esc(emptyMsg)}</div>`}`;
   }
   function meetCard(m) {
     const past = isNum(m.Date) && m.Date < today();
@@ -347,7 +347,7 @@
     const ds = filtered();
     if (pstate.view === "list") {
       const s = ds.map((r) => ({ r, x: deal(r) })).sort((a, b) => b.x.score - a.x.score);
-      return s.length ? s.map((d) => dealCard(d.r, { noActs: true })).join("") : '<div class="empty">No deals match.</div>';
+      return s.length ? `<div class="cardgrid">${s.map((d) => dealCard(d.r, { noActs: true })).join("")}</div>` : '<div class="empty">No deals match.</div>';
     }
     return `<div class="board">${stages.map((st) => {
       const items = ds.filter((r) => r.Stage === st).map((r) => ({ r, x: deal(r) })).sort((a, b) => b.x.score - a.x.score);
