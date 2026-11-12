@@ -6,6 +6,10 @@
   let edits = 0;
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; const r = o[k](...a); return r; } });
 
+  // Dashboard scope: "all" (consolidated) | "core" (existing pipeline) | "gcc" (new GCC hunt)
+  let dashScope = (() => { try { return localStorage.getItem("pp.dash") || "all"; } catch (e) { return "all"; } })();
+  const setDashScope = (v) => { dashScope = v; try { localStorage.setItem("pp.dash", v); } catch (e) {} };
+
   // ------------------------------------------------------------------ helpers
   const esc = (v) => (v == null ? "" : String(v)).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -26,6 +30,18 @@
   const live = (t) => rows(t).filter((r) => hasData(t, r));
   const deals = () => live("pipeline").filter((r) => r.Account);
   const dealById = (id) => deals().find((r) => r["Deal ID"] === id);
+  // GCC classification: reads the Segment field; falls back to [GF]/[BF] or greenfield/brownfield in Notes
+  const gccType = (r) => {
+    const s = String(r.Segment || "").toLowerCase();
+    if (s.includes("green")) return "Greenfield";
+    if (s.includes("brown")) return "Brownfield";
+    const n = String(r.Notes || "").toLowerCase();
+    if (/\[gf|greenfield/.test(n)) return "Greenfield";
+    if (/\[bf|brownfield/.test(n)) return "Brownfield";
+    return null;
+  };
+  const isGcc = (r) => !!gccType(r);
+  const hcIntel = (r) => r["HC Intelligence"] || r["HC Intelligence "] || "";
   const L = (n) => S.lists[n] || [];
   const tempDot = (t) => `<i class="dotT ${esc(t)}"></i>`;
   function followChip(f, date) {
@@ -180,9 +196,15 @@
   // ------------------------------------------------------------------ VIEWS
   const V = {};
 
+  const scopeToggle = () => `<div class="seg dashseg" id="dashscope">${[["all", "Consolidated"], ["core", "Pipeline"], ["gcc", "GCC Hunt"]].map(([v, l]) => `<button data-v="${v}" class="${dashScope === v ? "on" : ""}">${l}</button>`).join("")}</div>`;
+  const mountScope = (el) => { const g = $("#dashscope", el); if (g) g.onclick = (e) => { const b = e.target.closest("button"); if (b) { setDashScope(b.dataset.v); render(); } }; };
+
   V.today = () => {
     const t = today();
-    const ds = deals().map((r) => ({ r, x: deal(r) }));
+    const allds = deals().map((r) => ({ r, x: deal(r) }));
+    const ds = dashScope === "gcc" ? allds.filter((d) => isGcc(d.r)) : dashScope === "core" ? allds.filter((d) => !isGcc(d.r)) : allds;
+    if (dashScope === "gcc") return { title: "GCC Hunt", html: scopeToggle() + gccDash(ds), mount: mountScope };
+    const pipeHref = dashScope === "core" ? "#/pipeline?seg=core" : "#/pipeline";
     const actionable = ds.filter(({ r, x }) => x.open || r.Stage === "Nurture");
     const overdue = actionable.filter(({ x }) => x.follow === "Overdue").sort((a, b) => (b.x.score - a.x.score));
     const dueToday = actionable.filter(({ x }) => x.follow === "Due today").sort((a, b) => b.x.score - a.x.score);
@@ -205,13 +227,13 @@
     const out = outreachWeek(D.weekStart(t));
     const callsTarget = setting("T_Call", 50), emailT = setting("T_Email", 100), liT = setting("T_LinkedIn", 50);
     const hr = new Date().getHours();
-    const html = `
+    const html = scopeToggle() + `
       <div class="hello"><div><div class="sub">${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</div>
         <h2>Good ${hr < 12 ? "morning" : hr < 17 ? "afternoon" : "evening"}${C.owner ? ", " + esc(C.owner) : ""}</h2></div></div>
       <a class="agenda" href="#/standup">${I.stand}<div><div style="font-size:12px;color:var(--ink-3)">Stand-up focus this week</div><b>${esc(AGENDA[agenda].title)}</b></div></a>
       <div class="kpis">
-        <button class="kpi" data-go="#/pipeline"><div class="v">${ds.filter((d) => d.x.open).length}</div><div class="l">Open deals</div></button>
-        <button class="kpi" data-go="#/pipeline?temp=Hot"><div class="v">${hot}</div><div class="l">Hot</div></button>
+        <button class="kpi" data-go="${pipeHref}"><div class="v">${ds.filter((d) => d.x.open).length}</div><div class="l">Open deals</div></button>
+        <button class="kpi" data-go="${pipeHref}${dashScope === "core" ? "&" : "?"}temp=Hot"><div class="v">${hot}</div><div class="l">Hot</div></button>
         <button class="kpi ${overdue.length ? "bad" : ""}" data-scroll="sec-over"><div class="v">${overdue.length}</div><div class="l">Overdue</div></button>
         <button class="kpi ${noNext.length ? "warn" : ""}" data-scroll="sec-nonext"><div class="v">${noNext.length}</div><div class="l">No next step</div></button>
       </div>
@@ -234,18 +256,61 @@
       ${section("Delivery - interviews this week", dIv.map(dCandCard))}
       ${section("Delivery - follow-ups due", dDue.map(dCandCard), "warn")}
       ${!overdue.length && !dueToday.length && !noNext.length && !upcoming.length && !dDue.length && !dIv.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
-    return { title: "Today", html };
+    return { title: dashScope === "core" ? "Pipeline" : "Today", html, mount: mountScope };
   };
 
+  // ---------------- GCC HUNT dashboard (new greenfield/brownfield GCC tracking)
+  function gccDash(ds) {
+    const gf = ds.filter((d) => gccType(d.r) === "Greenfield");
+    const bf = ds.filter((d) => gccType(d.r) === "Brownfield");
+    const overdue = ds.filter((d) => d.x.follow === "Overdue").sort((a, b) => b.x.score - a.x.score);
+    const due = ds.filter((d) => ["Due today", "This week"].includes(d.x.follow)).sort((a, b) => a.r["Next Step Date"] - b.r["Next Step Date"]);
+    const noNext = ds.filter((d) => d.x.open && d.x.follow === "No next step").sort((a, b) => b.x.score - a.x.score);
+    const followDue = overdue.length + due.length;
+    const byCity = {}, byStage = {};
+    ds.forEach((d) => { const c = d.r.City || "—"; byCity[c] = (byCity[c] || 0) + 1; const s = d.r.Stage || "—"; byStage[s] = (byStage[s] || 0) + 1; });
+    const maxCity = Math.max(1, ...Object.values(byCity)), maxStage = Math.max(1, ...Object.values(byStage));
+    const bar = (label, n, max) => `<div style="display:grid;grid-template-columns:96px 1fr 26px;align-items:center;gap:9px;margin:6px 0;font-size:13px"><div style="color:var(--ink-2);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</div><div style="height:10px;border-radius:6px;background:var(--card);border:2px solid var(--b);overflow:hidden"><i style="display:block;height:100%;width:${Math.round(100 * n / max)}%;background:linear-gradient(90deg,#FB6A2E,#F9A825)"></i></div><b>${n}</b></div>`;
+    const hcList = ds.slice().sort((a, b) => (gccType(a.r) || "").localeCompare(gccType(b.r) || "") || String(a.r.Account).localeCompare(String(b.r.Account)));
+    return `
+      ${ds.length ? "" : `<div class="card" style="text-align:center"><b>No GCC targets yet.</b><p class="hint">Tag deals with <b>Segment</b> = GCC-Greenfield / GCC-Brownfield in your sheet (or put [GF] / [BF] in Notes) and they'll appear here.</p></div>`}
+      <div class="kpis">
+        <button class="kpi" data-go="#/pipeline?seg=gcc"><div class="v">${ds.length}</div><div class="l">GCC targets</div></button>
+        <button class="kpi" data-go="#/pipeline?seg=gf"><div class="v">${gf.length}</div><div class="l">Greenfield</div></button>
+        <button class="kpi" data-go="#/pipeline?seg=bf"><div class="v">${bf.length}</div><div class="l">Brownfield</div></button>
+        <button class="kpi ${followDue ? "warn" : ""}" data-scroll="gcc-follow"><div class="v">${followDue}</div><div class="l">Follow-ups due</div></button>
+      </div>
+      <div id="gcc-follow">${section("Follow-ups overdue", overdue.map((d) => dealCard(d.r)), "bad")}</div>
+      ${section("Due / this week", due.map((d) => dealCard(d.r)), "warn")}
+      ${section("Open · no next step", noNext.map((d) => dealCard(d.r)), "warn")}
+      ${ds.length ? `<div class="sec"><h2>By city</h2></div><div class="card">${Object.entries(byCity).sort((a, b) => b[1] - a[1]).map(([c, n]) => bar(c, n, maxCity)).join("")}</div>` : ""}
+      ${ds.length ? `<div class="sec"><h2>By stage</h2></div><div class="card">${L("Stage").filter((s) => byStage[s]).map((s) => bar(s, byStage[s], maxStage)).join("") || Object.entries(byStage).map(([s, n]) => bar(s, n, maxStage)).join("")}</div>` : ""}
+      ${ds.length ? `<div class="sec"><h2>Headcount intelligence</h2><span class="count">${ds.length}</span></div>
+      <div class="card" style="padding:0;overflow:hidden">${hcList.map((d) => `
+        <div data-go="#/deal/${encodeURIComponent(d.r["Deal ID"])}" style="display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-top:1px solid var(--b);cursor:pointer">
+          <span class="chip ${gccType(d.r) === "Greenfield" ? "ok" : "stage"}" style="flex:none">${gccType(d.r) === "Greenfield" ? "GF" : "BF"}</span>
+          <div style="flex:1;min-width:0"><div class="t1" style="font-weight:800">${esc(d.r.Account)}</div>
+            <div class="t2" style="font-size:12px;color:var(--ink-3)">${esc(d.r.City || "")}${d.r.Stage ? " · " + esc(d.r.Stage) : ""}</div>
+            ${hcIntel(d.r) ? `<div style="font-size:12.5px;margin-top:3px">${esc(hcIntel(d.r))}</div>` : ""}</div>
+        </div>`).join("")}</div>` : ""}`;
+  }
+
   // ---------------- PIPELINE board
-  const pstate = { q: "", temp: "", view: "board", closed: false };
+  const pstate = { q: "", temp: "", view: "board", closed: false, seg: "" };
+  const SEGLAB = { "": "All", core: "Pipeline", gcc: "GCC Hunt", gf: "GCC Hunt", bf: "GCC Hunt" };
   V.pipeline = (params) => {
     if (params.temp != null) pstate.temp = params.temp;
+    if (params.seg != null) pstate.seg = params.seg;
     const stages = L("Stage").filter((s) => pstate.closed || !["Nurture", "Lost"].includes(s));
+    const segOn = (v) => (pstate.seg === v || (v === "gcc" && ["gf", "bf"].includes(pstate.seg))) ? "on" : "";
     const html = `
       <div class="toolbar">
         <input class="search" id="pq" placeholder="Search account, contact, notes..." value="${esc(pstate.q)}">
         <div class="seg" id="pview"><button data-v="board" class="${pstate.view === "board" ? "on" : ""}">Board</button><button data-v="list" class="${pstate.view === "list" ? "on" : ""}">List</button></div>
+      </div>
+      <div class="toolbar">
+        <div class="seg" id="pseg"><button data-v="" class="${segOn("")}">All</button><button data-v="core" class="${segOn("core")}">Pipeline</button><button data-v="gcc" class="${segOn("gcc")}">GCC Hunt</button></div>
+        ${["gcc", "gf", "bf"].includes(pstate.seg) ? `<div class="seg" id="pgcc"><button data-v="gcc" class="${pstate.seg === "gcc" ? "on" : ""}">All GCC</button><button data-v="gf" class="${pstate.seg === "gf" ? "on" : ""}">Greenfield</button><button data-v="bf" class="${pstate.seg === "bf" ? "on" : ""}">Brownfield</button></div>` : ""}
       </div>
       <div class="toolbar">
         <div class="seg" id="ptemp">${["", "Hot", "Warm", "Cool", "Cold"].map((t) => `<button data-v="${t}" class="${pstate.temp === t ? "on" : ""}">${t || "All"}</button>`).join("")}</div>
@@ -253,18 +318,28 @@
       </div>
       <div id="pbody">${pipeBody(stages)}</div>`;
     return {
-      title: "Pipeline", html, mount: (el) => {
+      title: pstate.seg && pstate.seg !== "" ? SEGLAB[pstate.seg] : "Pipeline", html, mount: (el) => {
         $("#pq", el).addEventListener("input", (e) => { pstate.q = e.target.value; $("#pbody", el).innerHTML = pipeBody(stages); });
         $("#pview", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.view = b.dataset.v; render(); } };
+        $("#pseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.seg = b.dataset.v; history.replaceState(null, "", "#/pipeline"); render(); } };
+        if ($("#pgcc", el)) $("#pgcc", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.seg = b.dataset.v; history.replaceState(null, "", "#/pipeline"); render(); } };
         $("#ptemp", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.temp = b.dataset.v; history.replaceState(null, "", "#/pipeline"); render(); } };
         $("#pclosed", el).onclick = () => { pstate.closed = !pstate.closed; render(); };
         wireDnD(el);
       },
     };
   };
+  function segMatch(r) {
+    if (!pstate.seg) return true;
+    if (pstate.seg === "core") return !isGcc(r);
+    if (pstate.seg === "gcc") return isGcc(r);
+    if (pstate.seg === "gf") return gccType(r) === "Greenfield";
+    if (pstate.seg === "bf") return gccType(r) === "Brownfield";
+    return true;
+  }
   function filtered() {
     const q = pstate.q.toLowerCase();
-    return deals().filter((r) => (!pstate.temp || r.Temperature === pstate.temp) &&
+    return deals().filter((r) => segMatch(r) && (!pstate.temp || r.Temperature === pstate.temp) &&
       (!q || [r.Account, r.Contact, r.Designation, r.Notes, r["Next Step"], r.City, r.Source].join(" ").toLowerCase().includes(q)) &&
       (pstate.closed || !["Nurture", "Lost"].includes(r.Stage)));
   }
