@@ -171,9 +171,9 @@
         ${r["Next Step"] ? `<div class="t3">→ ${esc(r["Next Step"])}</div>` : ""}
         <div class="meta"><span class="chip stage">${esc(r.Stage || "-")}</span>${followChip(x.follow, r["Next Step Date"])}${r.Blocker ? `<span class="chip">${esc(r.Blocker)}</span>` : ""}</div>
         ${opt.noActs ? "" : `<div class="acts">
-          <button class="pri" data-act="log" data-id="${esc(r["Deal ID"])}">Log</button>
-          ${telLink(r.Phone) ? `<button data-act="call" data-id="${esc(r["Deal ID"])}">Call</button>` : ""}
-          <button data-act="snooze" data-id="${esc(r["Deal ID"])}">Snooze</button>
+          <button class="pri" data-act="log" data-id="${esc(r["Deal ID"])}" aria-label="Log touch">${I.log}<span class="lbl">Log</span></button>
+          ${telLink(r.Phone) ? `<button data-act="call" data-id="${esc(r["Deal ID"])}" aria-label="Call">${I.call}<span class="lbl">Call</span></button>` : ""}
+          <button data-act="snooze" data-id="${esc(r["Deal ID"])}" aria-label="Snooze">${I.cal}<span class="lbl">Snooze</span></button>
         </div>`}
       </div></div>`;
   }
