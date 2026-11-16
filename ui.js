@@ -1004,11 +1004,14 @@
       mount: (el) => { $("#cq", el).oninput = (e) => ($("#cl", el).innerHTML = contactList(cs, e.target.value.toLowerCase())); } };
   };
   function contactList(cs, q) {
-    return cs.filter((c) => !q || [c.SPOC, c.Client, c.BU, c["S-BU"], c.Role].join(" ").toLowerCase().includes(q)).map((c) => `<div class="card deal"><div class="main">
+    const rows = cs.filter((c) => !q || [c.SPOC, c.Client, c.BU, c["S-BU"], c.Role].join(" ").toLowerCase().includes(q))
+      .sort((a, b) => ((a.Status === "Active" ? 0 : 1) - (b.Status === "Active" ? 0 : 1)) || String(a.Client || "").localeCompare(String(b.Client || "")) || String(a.SPOC || "").localeCompare(String(b.SPOC || "")));
+    if (!rows.length) return '<div class="empty">No contacts</div>';
+    return `<div class="cardgrid">` + rows.map((c) => `<div class="card deal"><div class="main">
       <div class="t1"><span>${esc(c.SPOC)}</span></div><div class="t2">${esc(c.Client)} · ${esc(c.BU || "")}${c["S-BU"] ? " / " + esc(c["S-BU"]) : ""} · ${esc(c.Role || "")}</div>
       ${c.Notes ? `<div class="t3">${esc(c.Notes)}</div>` : ""}
       <div class="meta"><span class="chip">${esc(c.Status || "-")}</span>${isNum(c["Last Follow-up"]) ? `<span class="chip">Last ${D.fmt(c["Last Follow-up"], { abs: 1 })}</span>` : ""}</div>
-      <div class="acts">${telLink(c.Phone) ? `<a class="btn" href="${telLink(c.Phone)}">Call</a>` : ""}${waLink(c.Phone) ? `<a class="btn" href="${waLink(c.Phone)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${c.Email ? `<a class="btn" href="mailto:${esc(c.Email)}">Email</a>` : ""}<button class="pri" data-act="ctouch" data-sig='${esc(c._sig)}'>Log</button></div></div></div>`).join("") || '<div class="empty">No contacts</div>';
+      <div class="acts">${telLink(c.Phone) ? `<a class="btn" href="${telLink(c.Phone)}">Call</a>` : ""}${waLink(c.Phone) ? `<a class="btn" href="${waLink(c.Phone)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${c.Email ? `<a class="btn" href="mailto:${esc(c.Email)}">Email</a>` : ""}<button class="pri" data-act="ctouch" data-sig='${esc(c._sig)}'>Log</button></div></div></div>`).join("") + `</div>`;
   }
   function contactTouch(c) {
     sheet("Log · " + c.SPOC, `<div class="f"><label>Channel</label>${chips("ch", ["Call", "WhatsApp", "Email", "LinkedIn", "Meeting"], "Call")}</div>
@@ -1081,7 +1084,7 @@
   };
 
   V.more = () => {
-    const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
@@ -1167,13 +1170,13 @@
   function fabSheet() {
     sheet("Quick add", `<div class="list">
       <div class="li" data-q="log">${I.log}<div class="main"><b>Log a touch</b><div class="hint">Call, email, LinkedIn, WhatsApp</div></div></div>
+      <div class="li" data-q="dcand">${I.people}<div class="main"><b>Delivery: add candidate</b><div class="hint">Pick or add a requirement inside</div></div></div>
       <div class="li" data-q="deal">${I.target}<div class="main"><b>New opportunity</b></div></div>
       <div class="li" data-q="meet">${I.cal}<div class="main"><b>Book a meeting</b></div></div>
       <div class="li" data-q="lead">${I.lead}<div class="main"><b>Event lead / scan card</b></div></div>
       <div class="li" data-q="prop">${I.rupee}<div class="main"><b>Proposal / rate card</b></div></div>
       <div class="li" data-q="req">${I.req}<div class="main"><b>Requirement</b></div></div>
       <div class="li" data-q="commit">${I.flag}<div class="main"><b>Commitment</b></div></div>
-      <div class="li" data-q="dcand">${I.people}<div class="main"><b>Delivery: add candidate</b></div></div>
       <div class="li" data-q="dreq">${I.req}<div class="main"><b>Delivery: add requirement</b></div></div></div>`, (el, close) => {
       $(".list", el).onclick = (e) => { const li = e.target.closest(".li"); if (!li) return; close(); setTimeout(() => ({ log: pickDeal, deal: () => dealForm(null), meet: () => meetingForm(null), lead: () => (location.hash = "#/leads"), prop: () => propForm(null), req: () => reqForm(null), commit: () => commitForm(null), dcand: () => dCandForm(null), dreq: () => dReqForm(null) })[li.dataset.q](), 260); };
     });
@@ -1215,6 +1218,11 @@
   const dcands = () => live("delivery");
   const dreqs = () => live("deliveryReqs");
   const candsFor = (id) => dcands().filter((c) => c["Req ID"] === id);
+  // lenient: match by Req ID, or by Client+Role when a candidate wasn't linked to a Req ID
+  const candsForReq = (r) => dcands().filter((c) => (c["Req ID"] && c["Req ID"] === r["Req ID"]) || (r.Role && c.Role === r.Role && c.Client === r.Client));
+  // #3: a requirement is auto-closed when it HAS candidates but none has a pending (active) next follow-up
+  const reqAutoClosed = (r) => { const cs = candsForReq(r); return cs.length > 0 && !cs.some((c) => dActive(c.Status) && isNum(c["Next Follow-up"])); };
+  const reqOpen = (r) => r.Status === "Open" && !reqAutoClosed(r);
   const fmtCTC = (n) => (isNum(n) ? n + " LPA" : "");
   const nextReqId = () => { const n = dreqs().map((r) => +(String(r["Req ID"] || "").match(/\d+/) || [0])[0]); return "R-" + String(Math.max(0, ...n) + 1).padStart(3, "0"); };
   const reqOpts = () => dreqs().slice().sort((a, b) => (a.Status === "Open" ? -1 : 1) - (b.Status === "Open" ? -1 : 1)).map((r) => `${r["Req ID"]} · ${r.Client} · ${r.Role}`);
@@ -1237,28 +1245,42 @@
       <div class="meta"><span class="chip ${cls}">${esc(r.Status || "Open")}</span><span class="chip">${cs.length} cand</span>${active ? `<span class="chip ok">${active} active</span>` : ""}${joined ? `<span class="chip ok">${joined} joined</span>` : ""}</div></div></div>`;
   }
 
+  // compact rows (for closed / on-hold lists — not boxes)
+  function dCandRow(c) { return `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--b)"><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.Candidate)}</div><div style="font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.Role || "")}${c.Client ? " · " + esc(c.Client) : ""}</div></div>${statusChip(c.Status)}<button class="btn" data-act="dcand" data-sig='${esc(c._sig)}' style="padding:6px 11px;font-size:12px;flex:none">Edit</button></div>`; }
+  function dReqRow(r) { const dormant = r.Status === "Open" && reqAutoClosed(r); const label = dormant ? "No pending f/u" : (r.Status || "-"); const cls = dormant ? "" : ({ Open: "ok", "On Hold": "warn", Filled: "stage", Closed: "" }[r.Status] || ""); return `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--b)"><div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.Role)}</div><div style="font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.Client || "")}${r.SPOC ? " · " + esc(r.SPOC) : ""}</div></div><span class="chip ${cls}">${esc(label)}</span><button class="btn" data-act="editreq" data-id="${esc(r["Req ID"])}" style="padding:6px 11px;font-size:12px;flex:none">Edit</button></div>`; }
+  function compactList(title, rows, count) { if (!rows.length) return ""; return `<div class="sec"><h2>${esc(title)}</h2><span class="count">${count}</span></div><div class="card" style="padding:0;overflow:hidden">${rows.join("")}</div>`; }
+
   // ---------------- DELIVERY REVIEW (management dashboard)
   let delivView = (() => { try { return localStorage.getItem("pp.deliv") || "review"; } catch (e) { return "review"; } })();
   const setDelivView = (v) => { delivView = v; try { localStorage.setItem("pp.deliv", v); } catch (e) {} };
   const delivToggle = () => `<div class="seg dashseg" id="delivseg"><button data-v="review" class="${delivView === "review" ? "on" : ""}">Review</button><button data-v="queue" class="${delivView === "queue" ? "on" : ""}">Queue</button><button data-v="work" class="${delivView === "work" ? "on" : ""}">Work</button></div>`;
-  const mountDeliv = (el) => { const g = $("#delivseg", el); if (g) g.onclick = (e) => { const b = e.target.closest("button"); if (b) { setDelivView(b.dataset.v); render(); } }; };
+  let revPeriod = "all";
+  const PERIOD_LABEL = { all: "all time", w: "this week", m: "this month", q: "this quarter", y: "this year" };
+  const periodStart = (t) => { if (revPeriod === "w") return D.weekStart(t); const d = D.toJS(t); const S = (y, mo) => Math.floor(Date.UTC(y, mo, 1) / 864e5) + 25569; if (revPeriod === "m") return S(d.getUTCFullYear(), d.getUTCMonth()); if (revPeriod === "q") return S(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3); if (revPeriod === "y") return S(d.getUTCFullYear(), 0); return 0; };
+  const mountDeliv = (el) => {
+    const g = $("#delivseg", el); if (g) g.onclick = (e) => { const b = e.target.closest("button"); if (b) { setDelivView(b.dataset.v); render(); } };
+    const p = $("#revperiod", el); if (p) p.onclick = (e) => { const b = e.target.closest("button"); if (b) { revPeriod = b.dataset.v; render(); } };
+  };
   let reviewSummaryText = "";
   function deliveryReview(reqs, cands) {
     const t = today(), ws = D.weekStart(t);
-    const openReqs = reqs.filter((r) => r.Status === "Open");
+    const pstart = periodStart(t);
+    const pcands = revPeriod === "all" ? cands : cands.filter((c) => isNum(c.Submitted) && c.Submitted >= pstart);
+    const openReqs = reqs.filter(reqOpen);
     const active = cands.filter((c) => dActive(c.Status));
     const joined = cands.filter((c) => dWon(c.Status));
-    const lost = cands.filter((c) => DLOST.has(c.Status));
+    const joinedP = pcands.filter((c) => dWon(c.Status));
+    const lost = pcands.filter((c) => DLOST.has(c.Status));
     const offers = cands.filter((c) => STAGE_OF[c.Status] === "Offer" && c.Status !== "Offer Declined");
     const ivWeek = cands.filter((c) => dActive(c.Status) && isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7);
-    const sub = cands.length;
-    const reached = (set) => cands.filter((c) => set.includes(STAGE_OF[c.Status])).length;
+    const sub = pcands.length;
+    const reached = (set) => pcands.filter((c) => set.includes(STAGE_OF[c.Status])).length;
     const rIv = reached(["L1", "L2", "L3", "Offer", "Joined"]), rOf = reached(["Offer", "Joined"]), rJn = reached(["Joined"]);
     const pc = (a, b) => (b ? Math.round((100 * a) / b) : 0);
     const ageOf = (r) => (isNum(r["Req Received"]) ? t - r["Req Received"] : null);
-    const activeForReq = (r) => candsFor(r["Req ID"]).filter((c) => dActive(c.Status)).length;
-    const subForReq = (r) => candsFor(r["Req ID"]).length;
-    const furthest = (r) => { const cs = candsFor(r["Req ID"]); let best = -1; cs.forEach((c) => { const i = STAGE_ORDER.indexOf(STAGE_OF[c.Status]); if (i > best) best = i; }); return best >= 0 ? STAGE_ORDER[best] : "—"; };
+    const activeForReq = (r) => candsForReq(r).filter((c) => dActive(c.Status)).length;
+    const subForReq = (r) => candsForReq(r).length;
+    const furthest = (r) => { const cs = candsForReq(r); let best = -1; cs.forEach((c) => { const i = STAGE_ORDER.indexOf(STAGE_OF[c.Status]); if (i > best) best = i; }); return best >= 0 ? STAGE_ORDER[best] : "—"; };
     const riskOf = (r) => { const a = ageOf(r); if (subForReq(r) === 0 && (a == null || a > 7)) return 2; if (a != null && a > 21 && activeForReq(r) === 0) return 2; if (a != null && a > 30) return 1; return 0; };
     const atRisk = openReqs.filter((r) => riskOf(r) === 2);
     const avgAge = openReqs.length ? Math.round(openReqs.reduce((s, r) => s + (ageOf(r) || 0), 0) / openReqs.length) : 0;
@@ -1278,7 +1300,7 @@
     const tp = [];
     tp.push(`<b>${openReqs.length}</b> open role${openReqs.length !== 1 ? "s" : ""} across <b>${nc}</b> client${nc !== 1 ? "s" : ""}, avg age <b>${avgAge}d</b>; <b>${active.length}</b> candidates in process.`);
     tp.push(`Funnel: submit→interview <b>${pc(rIv, sub)}%</b>, interview→offer <b>${pc(rOf, rIv)}%</b>, offer→join <b>${pc(rJn, rOf)}%</b>. Overall fill rate <b>${fillRate}%</b>.`);
-    tp.push(`Near-term: <b>${ivWeek.length}</b> interview${ivWeek.length !== 1 ? "s" : ""} this week, <b>${offers.length}</b> offer${offers.length !== 1 ? "s" : ""} in hand, <b>${joined.length}</b> joined to date.`);
+    tp.push(`Near-term: <b>${ivWeek.length}</b> interview${ivWeek.length !== 1 ? "s" : ""} this week, <b>${offers.length}</b> offer${offers.length !== 1 ? "s" : ""} in hand, <b>${joinedP.length}</b> joined (${PERIOD_LABEL[revPeriod]}).`);
     tp.push(`Momentum this week: <b>+${newReqs}</b> new role${newReqs !== 1 ? "s" : ""}, <b>+${newSubs}</b> new submission${newSubs !== 1 ? "s" : ""}. Drop/reject rate <b>${dropRate}%</b>.`);
     if (atRisk.length) tp.push(`<span style="color:#C0392B">At risk: <b>${atRisk.length}</b> role${atRisk.length !== 1 ? "s" : ""} aged with no live pipeline — ${atRisk.slice(0, 3).map((r) => esc(r.Role) + " (" + esc(r.Client) + ")").join(", ")}${atRisk.length > 3 ? "…" : ""}.</span>`);
     if (offerStale.length) tp.push(`<span style="color:#C0392B">Ask management: expedite client feedback on <b>${offerStale.length}</b> pending offer${offerStale.length !== 1 ? "s" : ""} (no update in 7+ days) — drop risk.</span>`);
@@ -1293,6 +1315,7 @@
     openReqs.forEach((r) => { const a = ageOf(r); if (a == null) return; if (a <= 7) buckets[0][1]++; else if (a <= 21) buckets[1][1]++; else if (a <= 45) buckets[2][1]++; else buckets[3][1]++; });
     const maxB = Math.max(1, ...buckets.map((b) => b[1]));
     return `
+      <div class="seg" id="revperiod" style="margin-bottom:10px;flex-wrap:wrap">${[["all", "All"], ["w", "Weekly"], ["m", "Monthly"], ["q", "Quarterly"], ["y", "Annually"]].map(([v, l]) => `<button data-v="${v}" class="${revPeriod === v ? "on" : ""}">${l}</button>`).join("")}</div>
       <div class="kpis">
         <button class="kpi" data-scroll="rv-reqs"><div class="v">${openReqs.length}</div><div class="l">Open roles</div></button>
         <button class="kpi"><div class="v">${active.length}</div><div class="l">In process</div></button>
@@ -1307,8 +1330,11 @@
       </div>
       <div class="sec"><h2>Review talking points</h2></div>
       <div class="card" style="border-left:5px solid #EFA000"><ul style="margin:0;padding-left:18px;line-height:1.7">${tp.map((x) => `<li>${x}</li>`).join("")}</ul>
-        <div class="acts" style="margin-top:10px"><button class="pri" data-act="revcopy">${I.copy}<span class="lbl">Copy summary</span></button></div></div>
-      <div class="sec"><h2>Conversion funnel</h2></div>
+        <div class="acts" style="margin-top:10px"><button class="pri" data-act="revcopy" style="padding:5px 11px;font-size:11.5px;border-radius:10px">${I.copy}<span class="lbl">Copy</span></button></div></div>
+      <div class="sec"><h2>Client-wise</h2><span class="count">${clientRows.length}</span></div>
+      <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
+        ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${clientOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>
+      <div class="sec"><h2>Conversion funnel · ${PERIOD_LABEL[revPeriod]}</h2></div>
       <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of prev</th><th class="n">of sub</th></tr>
         <tr><td>Submitted</td><td class="n">${sub}</td><td class="n">—</td><td class="n">100%</td></tr>
         <tr><td>Interviewed</td><td class="n">${rIv}</td><td class="n">${pc(rIv, sub)}%</td><td class="n">${pc(rIv, sub)}%</td></tr>
@@ -1318,9 +1344,6 @@
       <div class="card">${openReqs.length ? `<table class="mini"><tr><th>Role</th><th class="n">Age</th><th class="n">Sub</th><th class="n">Active</th><th>Furthest</th></tr>${reqRows}</table><div class="hint" style="margin-top:7px">● red = aged / no pipeline · ● amber = aging · ● green = healthy — tap a row to open</div>` : '<div class="empty">No open roles</div>'}</div>
       <div class="sec"><h2>Aging of open roles</h2></div>
       <div class="card">${buckets.map((b) => bar(b[0], b[1], maxB)).join("")}</div>
-      <div class="sec"><h2>Client-wise</h2><span class="count">${clientRows.length}</span></div>
-      <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
-        ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${clientOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>
       ${atRisk.length ? `<div class="sec bad"><h2>Needs attention</h2><span class="count">${atRisk.length}</span></div><div class="cardgrid">${atRisk.map(dReqCard).join("")}</div>` : ""}`;
   }
 
@@ -1383,7 +1406,7 @@
     const reqs = dreqs(), cands = dcands();
     if ((reqs.length || cands.length) && delivView === "review") return { title: "Delivery · Review", back: true, html: delivToggle() + deliveryReview(reqs, cands), mount: mountDeliv };
     if ((reqs.length || cands.length) && delivView === "queue") return { title: "Delivery · Queue", back: true, html: delivToggle() + deliveryQueue(reqs, cands), mount: mountDeliv };
-    const live_ = reqs.filter((r) => r.Status === "Open");
+    const live_ = reqs.filter(reqOpen);
     const active = cands.filter((c) => dActive(c.Status));
     const due = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t)
       .sort((a, b) => (a["Next Follow-up"] || 0) - (b["Next Follow-up"] || 0));
@@ -1417,7 +1440,7 @@
       <div id="d-due">${section("Follow-ups due", due.slice(0, 20).map(dCandCard), "warn", "No follow-ups due")}</div>
       <div id="d-int">${section("Interviews lined up", interviews.map(dCandCard), "", "No interviews scheduled")}</div>
       ${section("Offered", offered.map(dCandCard))}
-      ${section("On hold (client-parked · closed)", cands.filter((c) => DPARKED.has(c.Status)).map(dCandCard))}
+      ${(() => { const oh = cands.filter((c) => DPARKED.has(c.Status)); return compactList("On hold (client-parked · closed)", oh.map(dCandRow), oh.length); })()}
       ${section("Recently joined", joined.slice(-10).reverse().map(dCandCard))}
       <div id="d-reqs" class="sec"><h2>Open roles</h2><span class="count">${live_.length}</span></div>
       ${live_.map(dReqCard).join("") || '<div class="empty">No open roles</div>'}
@@ -1427,7 +1450,7 @@
       <div class="sec"><h2>By client</h2></div>
       <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Subm.</th><th class="n">Active</th><th class="n">Joined</th></tr>
         ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.s}</td><td class="n">${v.a}</td><td class="n">${v.j}</td></tr>`).join("")}</table></div>
-      ${section("All roles", reqs.filter((r) => !live_.includes(r)).map(dReqCard))}`,
+      ${(() => { const other = reqs.filter((r) => !live_.includes(r)); return compactList("All roles", other.map(dReqRow), other.length); })()}`,
     };
   };
 
@@ -1480,7 +1503,7 @@
     sheet(isNew ? "New candidate" : c.Candidate, `
       ${field("Candidate *", "Candidate", c.Candidate)}
       ${req ? `<div class="f"><label>Requirement</label><input value="${esc(curReqLabel)}" readonly></div>`
-        : `<div class="f"><label>Requirement</label><select name="reqpick"><option value="">— none / fill manually —</option>${reqList.map((o) => `<option ${o.indexOf(c["Req ID"] + " ") === 0 ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`}
+        : `<div class="f"><label>Requirement</label><div style="display:flex;gap:6px"><select name="reqpick" style="flex:1;min-width:0"><option value="">— none / fill manually —</option>${reqList.map((o) => `<option ${o.indexOf(c["Req ID"] + " ") === 0 ? "selected" : ""}>${esc(o)}</option>`).join("")}</select><button type="button" class="btn" id="newreqbtn" style="white-space:nowrap">+ New</button></div></div>`}
       <div class="f2">${field("Client", "Client", c.Client)}${field("Role", "Role", c.Role)}</div>
       <div class="f2">${field("SPOC", "SPOC", c.SPOC)}${field("Submitted", "Submitted", c.Submitted, "date")}</div>
       ${select("Status", "status", DSTATUS, c.Status, false)}
@@ -1490,6 +1513,7 @@
       ${field("Notes", "Notes", c.Notes, "textarea")}
       <button class="btn pri block" id="save">${isNew ? "Add candidate" : "Save"}</button>`, (el, close) => {
       wireDateChips(el);
+      const nrb = $("#newreqbtn", el); if (nrb) nrb.onclick = () => { close(); setTimeout(() => dReqForm(null, (nr) => dCandForm(null, nr)), 260); };
       const pick = $('[name="reqpick"]', el);
       if (pick) pick.addEventListener("change", () => {
         const m = pick.value.split(" · "); if (m.length >= 3) { const rr = dreqs().find((r) => r["Req ID"] === m[0]); if (rr) { $('[name="Client"]', el).value = rr.Client || ""; $('[name="Role"]', el).value = rr.Role || ""; $('[name="SPOC"]', el).value = rr.SPOC || ""; } }
@@ -1505,7 +1529,7 @@
       };
     });
   }
-  function dReqForm(r) {
+  function dReqForm(r, after) {
     const isNew = !r;
     r = r || { Status: "Open", "Req Received": today() };
     sheet(isNew ? "New requirement" : r.Role, `
@@ -1519,7 +1543,7 @@
         const f = form(el);
         if (!f.Role) return toast("Role is required", "warn");
         const v = { Client: f.Client, SPOC: f.SPOC, Role: f.Role, "Req Received": f["Req Received"], Budget: f.Budget, Priority: f.Priority, Status: f.Status, Notes: f.Notes };
-        if (isNew) { v["Req ID"] = nextReqId(); const row = API.add("deliveryReqs", v); close(); toast("Role added"); location.hash = "#/req/" + encodeURIComponent(v["Req ID"]); }
+        if (isNew) { v["Req ID"] = nextReqId(); API.add("deliveryReqs", v); close(); toast("Role added"); if (after) setTimeout(() => after(v), 260); else location.hash = "#/req/" + encodeURIComponent(v["Req ID"]); }
         else { API.update("deliveryReqs", r, v); close(); toast("Saved"); render(); }
       };
     });
@@ -1570,7 +1594,7 @@
       <nav class="bottom">
         <a href="#/today" data-nav="today">${I.today}Today</a><a href="#/pipeline" data-nav="pipeline">${I.board}Pipeline</a>
         <button class="fab" data-act="fab" aria-label="Quick add">+</button>
-        <a href="#/outreach" data-nav="outreach">${I.out}Outreach</a><a href="#/more" data-nav="more">${I.more}More</a>
+        <a href="#/delivery" data-nav="delivery">${I.req}Delivery</a><a href="#/more" data-nav="more">${I.more}More</a>
       </nav>`;
     $("#back").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/today"));
     $("#gsearch").onclick = globalSearch;
