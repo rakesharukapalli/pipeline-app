@@ -1240,7 +1240,7 @@
   // ---------------- DELIVERY REVIEW (management dashboard)
   let delivView = (() => { try { return localStorage.getItem("pp.deliv") || "review"; } catch (e) { return "review"; } })();
   const setDelivView = (v) => { delivView = v; try { localStorage.setItem("pp.deliv", v); } catch (e) {} };
-  const delivToggle = () => `<div class="seg dashseg" id="delivseg"><button data-v="review" class="${delivView === "review" ? "on" : ""}">Review</button><button data-v="work" class="${delivView === "work" ? "on" : ""}">Work</button></div>`;
+  const delivToggle = () => `<div class="seg dashseg" id="delivseg"><button data-v="review" class="${delivView === "review" ? "on" : ""}">Review</button><button data-v="queue" class="${delivView === "queue" ? "on" : ""}">Queue</button><button data-v="work" class="${delivView === "work" ? "on" : ""}">Work</button></div>`;
   const mountDeliv = (el) => { const g = $("#delivseg", el); if (g) g.onclick = (e) => { const b = e.target.closest("button"); if (b) { setDelivView(b.dataset.v); render(); } }; };
   let reviewSummaryText = "";
   function deliveryReview(reqs, cands) {
@@ -1324,10 +1324,65 @@
       ${atRisk.length ? `<div class="sec bad"><h2>Needs attention</h2><span class="count">${atRisk.length}</span></div><div class="cardgrid">${atRisk.map(dReqCard).join("")}</div>` : ""}`;
   }
 
+  // ---------------- DELIVERY QUEUE (per-requirement stage boards, grouped by client)
+  const qAge = (c) => { const t = today(); if (isNum(c["Last Follow-up"])) return t - c["Last Follow-up"]; if (isNum(c.Submitted)) return t - c.Submitted; return null; };
+  const qKind = (c) => { const st = c.Status || "", stg = STAGE_OF[st], a = qAge(c) || 0; if (stg === "Offer") return a >= 3 ? "red" : "amb"; if (/FB Pending/i.test(st)) return a >= 4 ? "red" : "amb"; if (SCHEDULED.has(st)) return (isNum(c["Interview Date"]) && c["Interview Date"] < today()) ? "amb" : "grn"; if (/Screen/i.test(st)) return a >= 3 ? "red" : "amb"; return "amb"; };
+  const qNext = (c) => { const st = c.Status || "", stg = STAGE_OF[st], a = qAge(c) || 0, t = today(); if (stg === "Offer") return "Confirm acceptance & joining date"; if (/FB Pending/i.test(st)) return `Chase client for ${stg} feedback` + (a >= 4 ? " — overdue" : ""); if (SCHEDULED.has(st)) { if (isNum(c["Interview Date"])) { if (c["Interview Date"] < t) return "Collect " + stg + " feedback"; if (c["Interview Date"] === t) return "Interview today — confirm"; } return "Prep candidate for " + stg; } if (/Screen/i.test(st)) return "Screen & submit to client"; return "Follow up"; };
+  const qAgeLabel = (c) => { if (SCHEDULED.has(c.Status || "") && isNum(c["Interview Date"]) && c["Interview Date"] >= today()) return D.fmt(c["Interview Date"]); const a = qAge(c); return a == null ? "—" : a + "d"; };
+  function qPill(c) {
+    const k = qKind(c), chipCls = { red: "bad", amb: "warn", grn: "ok" }[k], col = k === "red" ? "#B3201F" : k === "amb" ? "#8A5A00" : "#17874F";
+    const note = c.Notes ? String(c.Notes).split("|")[0].trim() : "";
+    return `<div class="card deal" style="padding:9px;margin:0 0 8px;cursor:pointer" data-act="dlog" data-sig='${esc(c._sig)}'>
+      <div style="font-weight:800;font-size:12.5px">${esc(c.Candidate)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:6px"><span class="chip ${chipCls}">${esc(c.Status || "-")}</span><span style="font-size:10px;font-weight:800;color:${col}">${esc(qAgeLabel(c))}</span></div>
+      ${note ? `<div style="font-size:10.5px;color:var(--ink-3);margin-top:6px;font-style:italic;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(note)}</div>` : ""}
+      <div style="font-size:10px;margin-top:7px;padding-top:6px;border-top:1px dashed var(--b);color:var(--ink-2)">→ ${esc(qNext(c))}</div>
+    </div>`;
+  }
+  function qBoard(cs) {
+    const byStage = {}; cs.forEach((c) => { const s = STAGE_OF[c.Status] || "Other"; (byStage[s] = byStage[s] || []).push(c); });
+    const cols = STAGE_ORDER.filter((s) => byStage[s] && byStage[s].length).concat(Object.keys(byStage).filter((s) => STAGE_ORDER.indexOf(s) < 0));
+    return `<div style="display:flex;gap:9px;overflow-x:auto;padding-bottom:4px">${cols.map((s) => `
+      <div style="flex:0 0 156px;background:rgba(120,90,50,.06);border:1.5px dashed rgba(60,40,20,.18);border-radius:13px;padding:8px">
+        <div style="font-size:11px;font-weight:800;color:var(--ink-2);display:flex;justify-content:space-between;margin-bottom:7px"><span>${esc(s)}</span><span>${byStage[s].length}</span></div>
+        ${byStage[s].slice().sort((a, b) => (qAge(b) || 0) - (qAge(a) || 0)).map(qPill).join("")}</div>`).join("")}</div>`;
+  }
+  function deliveryQueue(reqs, cands) {
+    const t = today();
+    const active = cands.filter((c) => dActive(c.Status));
+    if (!active.length) return `<div class="card" style="text-align:center"><b>No active submissions in motion.</b><p class="hint">Candidates in Screening / L1 / L2 / L3 / Offer appear here, grouped by client and requirement.</p></div>`;
+    const atClient = active.filter((c) => /FB Pending/i.test(c.Status || "")).length;
+    const stale = active.filter((c) => (qAge(c) || 0) >= 5).length;
+    const ivs = active.filter((c) => SCHEDULED.has(c.Status || "") || (isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7)).length;
+    const byClient = {};
+    active.forEach((c) => { const cl = c.Client || "(no client)"; (byClient[cl] = byClient[cl] || {}); const rk = (c["Req ID"] || "") + "|" + (c.Role || "(no role)"); (byClient[cl][rk] = byClient[cl][rk] || { role: c.Role || "(no role)", rid: c["Req ID"] || "", cands: [] }); byClient[cl][rk].cands.push(c); });
+    let html = `<div class="kpis">
+      <button class="kpi"><div class="v">${active.length}</div><div class="l">In motion</div></button>
+      <button class="kpi ${atClient ? "warn" : ""}"><div class="v">${atClient}</div><div class="l">At client</div></button>
+      <button class="kpi ${stale ? "bad" : ""}"><div class="v">${stale}</div><div class="l">Stale 5d+</div></button>
+      <button class="kpi"><div class="v">${ivs}</div><div class="l">Interviews</div></button></div>`;
+    Object.keys(byClient).sort().forEach((cl) => {
+      const rm = byClient[cl], keys = Object.keys(rm).sort((a, b) => rm[b].cands.length - rm[a].cands.length);
+      const total = keys.reduce((s, k) => s + rm[k].cands.length, 0);
+      html += `<div class="sec"><h2>${esc(cl)}</h2><span class="count">${keys.length} role${keys.length !== 1 ? "s" : ""} · ${total}</span></div>`;
+      keys.forEach((k) => {
+        const r = rm[k], rr = r.rid ? dreqs().find((x) => x["Req ID"] === r.rid) : null;
+        const age = rr && isNum(rr["Req Received"]) ? t - rr["Req Received"] : null;
+        html += `<div class="card" style="padding:12px">
+          <div ${r.rid ? `data-go="#/req/${encodeURIComponent(r.rid)}" style="cursor:pointer"` : ""} style="margin-bottom:9px">
+            <div style="font-weight:800;font-size:13.5px">${esc(r.role)}</div>
+            <div style="font-size:11px;color:var(--ink-3)">${r.cands.length} in customer queue${age != null ? " · role age " + age + "d" : ""}</div></div>
+          ${qBoard(r.cands)}</div>`;
+      });
+    });
+    return html;
+  }
+
   V.delivery = () => {
     const t = today();
     const reqs = dreqs(), cands = dcands();
     if ((reqs.length || cands.length) && delivView === "review") return { title: "Delivery · Review", back: true, html: delivToggle() + deliveryReview(reqs, cands), mount: mountDeliv };
+    if ((reqs.length || cands.length) && delivView === "queue") return { title: "Delivery · Queue", back: true, html: delivToggle() + deliveryQueue(reqs, cands), mount: mountDeliv };
     const live_ = reqs.filter((r) => r.Status === "Open");
     const active = cands.filter((c) => dActive(c.Status));
     const due = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t)
