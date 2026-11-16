@@ -72,6 +72,8 @@
     xl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l8 8M16 8l-8 8"/></svg>',
     target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>',
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+    lib: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h7M9 11h5"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
   };
 
   // ------------------------------------------------------------------ toast / sheet
@@ -1026,8 +1028,60 @@
   // ---------------- MORE + SETTINGS
   let installEvt = null;
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; });
+  // ------------------------------------------------------------------ LIBRARY (content repository)
+  const libItems = () => live("library");
+  const libState = { q: "", cat: "" };
+  function copyText(txt) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(txt).catch(() => fallbackCopy(txt)); return; } } catch (e) {}
+    fallbackCopy(txt);
+  }
+  function fallbackCopy(txt) { const ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.focus(); ta.select(); try { document.execCommand("copy"); } catch (e) {} ta.remove(); }
+  function libCardHtml(i) {
+    const body = i.Body || "", link = i.Link || "";
+    const snippet = body ? esc(body.length > 180 ? body.slice(0, 180) + "…" : body) : "";
+    return `<div class="card">
+      <div class="t1" style="font-weight:800;display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span>${esc(i.Title || "Untitled")}</span>${i.Category ? `<span class="chip stage">${esc(i.Category)}</span>` : ""}${i.Type ? `<span class="chip">${esc(i.Type)}</span>` : ""}</div>
+      ${i.Tags ? `<div class="t2" style="font-size:12px;color:var(--ink-3);margin-top:3px">${esc(i.Tags)}</div>` : ""}
+      ${snippet ? `<div class="t3" style="font-size:13px;margin-top:7px;white-space:pre-wrap;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden">${snippet}</div>` : ""}
+      <div class="acts" style="margin-top:9px">
+        ${body ? `<button class="pri" data-act="libcopy" data-sig='${esc(i._sig)}'>${I.copy}<span class="lbl">Copy</span></button><button data-act="libview" data-sig='${esc(i._sig)}'>View</button>` : ""}
+        ${link ? `<a class="btn" href="${esc(link)}" target="_blank" rel="noopener">${I.out}<span class="lbl">Open</span></a>` : ""}
+      </div>
+      ${i.Updated || i.Owner ? `<div class="hint" style="margin-top:6px">${i.Updated ? "Updated " + esc(D.fmt(i.Updated, { abs: 1 })) : ""}${i.Owner ? (i.Updated ? " · " : "") + esc(i.Owner) : ""}</div>` : ""}
+    </div>`;
+  }
+  function libFilter() {
+    const q = libState.q.toLowerCase();
+    return libItems().filter((i) => (!libState.cat || (i.Category || "Other").trim() === libState.cat) &&
+      (!q || [i.Title, i.Category, i.Tags, i.Body, i.Type, i.Owner].join(" ").toLowerCase().includes(q)));
+  }
+  function libViewSheet(i) {
+    sheet(i.Title || "Item", `${i.Category || i.Type ? `<div style="margin-bottom:8px">${i.Category ? `<span class="chip stage">${esc(i.Category)}</span> ` : ""}${i.Type ? `<span class="chip">${esc(i.Type)}</span>` : ""}</div>` : ""}
+      <div class="card" style="white-space:pre-wrap">${esc(i.Body || "")}</div>
+      ${i.Link ? `<a class="btn block" href="${esc(i.Link)}" target="_blank" rel="noopener">Open attachment</a>` : ""}
+      <button class="btn pri block" id="lc">Copy text</button>`, (el) => { $("#lc", el).onclick = () => { copyText(i.Body || ""); toast("Copied"); }; });
+  }
+  V.library = () => {
+    const items = libItems();
+    const cats = [...new Set(items.map((i) => (i.Category || "Other").trim()).filter(Boolean))].sort();
+    const empty = !items.length;
+    const render_ = () => `<div class="cardgrid">${libFilter().map(libCardHtml).join("") || '<div class="empty">Nothing matches.</div>'}</div>`;
+    return {
+      title: "Library", back: true, html: empty ? `<div class="card"><b>Your content library is empty.</b>
+        <p class="hint">Add a <b>Library</b> tab to your sheet (header row 1) with columns: <b>Category, Title, Type, Body, Link, Tags, Owner, Updated</b>.</p>
+        <p class="hint">Put email templates & pitches in <b>Body</b> (shown with a Copy button). Put decks/PDFs in Google Drive or SharePoint and paste the share link in <b>Link</b> (shown with an Open button). Then add <code>library</code> to Code.gs and redeploy.</p></div>` : `
+      <div class="toolbar"><input class="search" id="lq" placeholder="Search pitches, templates, decks..." value="${esc(libState.q)}"></div>
+      <div class="seg" id="lcat" style="margin-bottom:8px;flex-wrap:wrap"><button data-v="" class="${libState.cat === "" ? "on" : ""}">All</button>${cats.map((c) => `<button data-v="${esc(c)}" class="${libState.cat === c ? "on" : ""}">${esc(c)}</button>`).join("")}</div>
+      <div id="lbody">${render_()}</div>`,
+      mount: (el) => {
+        const q = $("#lq", el); if (q) q.addEventListener("input", (e) => { libState.q = e.target.value; $("#lbody", el).innerHTML = render_(); });
+        const lc = $("#lcat", el); if (lc) lc.onclick = (e) => { const b = e.target.closest("button"); if (b) { libState.cat = b.dataset.v; render(); } };
+      },
+    };
+  };
+
   V.more = () => {
-    const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
@@ -1085,6 +1139,9 @@
         case "lead2pipe": { const l = bySig("leads", sig); return l && lead2pipe(l); }
         case "tdec": { const t = live("targets").find((x) => x.Account === a.dataset.n); if (t) { API.update("targets", t, { "Your Decision": a.dataset.v }); toast(t.Account + ": " + a.dataset.v); render(); } return; }
         case "ctouch": { const c = bySig("contacts", sig); return c && contactTouch(c); }
+        case "libcopy": e.stopPropagation(); { const i = bySig("library", sig); if (i && i.Body) { copyText(i.Body); toast("Copied · " + (i.Title || "")); } return; }
+        case "libview": { const i = bySig("library", sig); return i && libViewSheet(i); }
+        case "revcopy": e.stopPropagation(); copyText(reviewSummaryText); return toast("Review summary copied");
         case "dcand": { const c = bySig("delivery", sig); return c && dCandForm(c); }
         case "dlog": e.stopPropagation(); { const c = bySig("delivery", sig); return c && dLog(c); }
         case "newcand": return dCandForm(null, a.dataset.req ? dreqs().find((r) => r["Req ID"] === a.dataset.req) : null);
@@ -1180,9 +1237,97 @@
       <div class="meta"><span class="chip ${cls}">${esc(r.Status || "Open")}</span><span class="chip">${cs.length} cand</span>${active ? `<span class="chip ok">${active} active</span>` : ""}${joined ? `<span class="chip ok">${joined} joined</span>` : ""}</div></div></div>`;
   }
 
+  // ---------------- DELIVERY REVIEW (management dashboard)
+  let delivView = (() => { try { return localStorage.getItem("pp.deliv") || "review"; } catch (e) { return "review"; } })();
+  const setDelivView = (v) => { delivView = v; try { localStorage.setItem("pp.deliv", v); } catch (e) {} };
+  const delivToggle = () => `<div class="seg dashseg" id="delivseg"><button data-v="review" class="${delivView === "review" ? "on" : ""}">Review</button><button data-v="work" class="${delivView === "work" ? "on" : ""}">Work</button></div>`;
+  const mountDeliv = (el) => { const g = $("#delivseg", el); if (g) g.onclick = (e) => { const b = e.target.closest("button"); if (b) { setDelivView(b.dataset.v); render(); } }; };
+  let reviewSummaryText = "";
+  function deliveryReview(reqs, cands) {
+    const t = today(), ws = D.weekStart(t);
+    const openReqs = reqs.filter((r) => r.Status === "Open");
+    const active = cands.filter((c) => dActive(c.Status));
+    const joined = cands.filter((c) => dWon(c.Status));
+    const lost = cands.filter((c) => DLOST.has(c.Status));
+    const offers = cands.filter((c) => STAGE_OF[c.Status] === "Offer" && c.Status !== "Offer Declined");
+    const ivWeek = cands.filter((c) => dActive(c.Status) && isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7);
+    const sub = cands.length;
+    const reached = (set) => cands.filter((c) => set.includes(STAGE_OF[c.Status])).length;
+    const rIv = reached(["L1", "L2", "L3", "Offer", "Joined"]), rOf = reached(["Offer", "Joined"]), rJn = reached(["Joined"]);
+    const pc = (a, b) => (b ? Math.round((100 * a) / b) : 0);
+    const ageOf = (r) => (isNum(r["Req Received"]) ? t - r["Req Received"] : null);
+    const activeForReq = (r) => candsFor(r["Req ID"]).filter((c) => dActive(c.Status)).length;
+    const subForReq = (r) => candsFor(r["Req ID"]).length;
+    const furthest = (r) => { const cs = candsFor(r["Req ID"]); let best = -1; cs.forEach((c) => { const i = STAGE_ORDER.indexOf(STAGE_OF[c.Status]); if (i > best) best = i; }); return best >= 0 ? STAGE_ORDER[best] : "—"; };
+    const riskOf = (r) => { const a = ageOf(r); if (subForReq(r) === 0 && (a == null || a > 7)) return 2; if (a != null && a > 21 && activeForReq(r) === 0) return 2; if (a != null && a > 30) return 1; return 0; };
+    const atRisk = openReqs.filter((r) => riskOf(r) === 2);
+    const avgAge = openReqs.length ? Math.round(openReqs.reduce((s, r) => s + (ageOf(r) || 0), 0) / openReqs.length) : 0;
+    const filledRoles = reqs.filter((r) => r.Status === "Filled").length;
+    const fillRate = pc(filledRoles, filledRoles + openReqs.length);
+    const dropRate = pc(lost.length, sub);
+    const offerStale = offers.filter((c) => !isNum(c["Last Follow-up"]) || t - c["Last Follow-up"] > 7);
+    const needAttn = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t);
+    const newReqs = reqs.filter((r) => isNum(r["Req Received"]) && r["Req Received"] >= ws).length;
+    const newSubs = cands.filter((c) => isNum(c.Submitted) && c.Submitted >= ws).length;
+    const clientOpen = {}; openReqs.forEach((r) => { const k = r.Client || "(none)"; clientOpen[k] = (clientOpen[k] || 0) + 1; });
+    const byClient = {};
+    cands.forEach((c) => { const k = c.Client || "(none)"; const o = (byClient[k] = byClient[k] || { sub: 0, act: 0, iv: 0, off: 0, jn: 0 }); o.sub++; if (dActive(c.Status)) o.act++; if (isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7 && dActive(c.Status)) o.iv++; if (STAGE_OF[c.Status] === "Offer") o.off++; if (dWon(c.Status)) o.jn++; });
+    Object.keys(clientOpen).forEach((k) => { byClient[k] = byClient[k] || { sub: 0, act: 0, iv: 0, off: 0, jn: 0 }; });
+    const clientRows = Object.entries(byClient).sort((a, b) => (clientOpen[b[0]] || 0) - (clientOpen[a[0]] || 0) || b[1].act - a[1].act);
+    const nc = Object.keys(clientOpen).length;
+    const tp = [];
+    tp.push(`<b>${openReqs.length}</b> open role${openReqs.length !== 1 ? "s" : ""} across <b>${nc}</b> client${nc !== 1 ? "s" : ""}, avg age <b>${avgAge}d</b>; <b>${active.length}</b> candidates in process.`);
+    tp.push(`Funnel: submit→interview <b>${pc(rIv, sub)}%</b>, interview→offer <b>${pc(rOf, rIv)}%</b>, offer→join <b>${pc(rJn, rOf)}%</b>. Overall fill rate <b>${fillRate}%</b>.`);
+    tp.push(`Near-term: <b>${ivWeek.length}</b> interview${ivWeek.length !== 1 ? "s" : ""} this week, <b>${offers.length}</b> offer${offers.length !== 1 ? "s" : ""} in hand, <b>${joined.length}</b> joined to date.`);
+    tp.push(`Momentum this week: <b>+${newReqs}</b> new role${newReqs !== 1 ? "s" : ""}, <b>+${newSubs}</b> new submission${newSubs !== 1 ? "s" : ""}. Drop/reject rate <b>${dropRate}%</b>.`);
+    if (atRisk.length) tp.push(`<span style="color:#C0392B">At risk: <b>${atRisk.length}</b> role${atRisk.length !== 1 ? "s" : ""} aged with no live pipeline — ${atRisk.slice(0, 3).map((r) => esc(r.Role) + " (" + esc(r.Client) + ")").join(", ")}${atRisk.length > 3 ? "…" : ""}.</span>`);
+    if (offerStale.length) tp.push(`<span style="color:#C0392B">Ask management: expedite client feedback on <b>${offerStale.length}</b> pending offer${offerStale.length !== 1 ? "s" : ""} (no update in 7+ days) — drop risk.</span>`);
+    if (needAttn.length) tp.push(`<b>${needAttn.length}</b> active candidate${needAttn.length !== 1 ? "s" : ""} need a follow-up today.`);
+    const strip = (s) => s.replace(/<[^>]+>/g, "");
+    reviewSummaryText = "Delivery review — " + D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) + "\n\n• " + tp.map(strip).join("\n• ");
+    const riskDot = (r) => { const x = riskOf(r); return `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${x === 2 ? "#E5484D" : x === 1 ? "#F5A33B" : "#2EB36A"}"></span>`; };
+    const reqRows = openReqs.slice().sort((a, b) => riskOf(b) - riskOf(a) || (ageOf(b) || 0) - (ageOf(a) || 0))
+      .map((r) => `<tr data-go="#/req/${encodeURIComponent(r["Req ID"])}" style="cursor:pointer"><td>${riskDot(r)} ${esc(r.Role)}<div style="font-size:11px;color:var(--ink-3)">${esc(r.Client || "")}</div></td><td class="n">${ageOf(r) != null ? ageOf(r) + "d" : "—"}</td><td class="n">${subForReq(r)}</td><td class="n">${activeForReq(r)}</td><td>${esc(furthest(r))}</td></tr>`).join("");
+    const bar = (label, n, max) => `<div style="display:grid;grid-template-columns:64px 1fr 26px;align-items:center;gap:8px;margin:5px 0;font-size:13px"><div style="color:var(--ink-2);font-weight:700">${esc(label)}</div><div style="height:10px;border-radius:6px;background:var(--card);border:2px solid var(--b);overflow:hidden"><i style="display:block;height:100%;width:${max ? Math.round((100 * n) / max) : 0}%;background:linear-gradient(90deg,#FB6A2E,#F9A825)"></i></div><b>${n}</b></div>`;
+    const buckets = [["0-7d", 0], ["8-21d", 0], ["22-45d", 0], ["45d+", 0]];
+    openReqs.forEach((r) => { const a = ageOf(r); if (a == null) return; if (a <= 7) buckets[0][1]++; else if (a <= 21) buckets[1][1]++; else if (a <= 45) buckets[2][1]++; else buckets[3][1]++; });
+    const maxB = Math.max(1, ...buckets.map((b) => b[1]));
+    return `
+      <div class="kpis">
+        <button class="kpi" data-scroll="rv-reqs"><div class="v">${openReqs.length}</div><div class="l">Open roles</div></button>
+        <button class="kpi"><div class="v">${active.length}</div><div class="l">In process</div></button>
+        <button class="kpi"><div class="v">${ivWeek.length}</div><div class="l">Interviews / wk</div></button>
+        <button class="kpi ${offers.length ? "warn" : ""}"><div class="v">${offers.length}</div><div class="l">Offers</div></button>
+      </div>
+      <div class="card" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center">
+        <div><div style="font-size:20px;font-weight:800">${fillRate}%</div><div class="hint">Fill rate</div></div>
+        <div><div style="font-size:20px;font-weight:800">${pc(rJn, rOf)}%</div><div class="hint">Offer→Join</div></div>
+        <div><div style="font-size:20px;font-weight:800">${dropRate}%</div><div class="hint">Drop rate</div></div>
+        <div><div style="font-size:20px;font-weight:800">${avgAge}d</div><div class="hint">Avg age</div></div>
+      </div>
+      <div class="sec"><h2>Review talking points</h2></div>
+      <div class="card" style="border-left:5px solid #EFA000"><ul style="margin:0;padding-left:18px;line-height:1.7">${tp.map((x) => `<li>${x}</li>`).join("")}</ul>
+        <div class="acts" style="margin-top:10px"><button class="pri" data-act="revcopy">${I.copy}<span class="lbl">Copy summary</span></button></div></div>
+      <div class="sec"><h2>Conversion funnel</h2></div>
+      <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of prev</th><th class="n">of sub</th></tr>
+        <tr><td>Submitted</td><td class="n">${sub}</td><td class="n">—</td><td class="n">100%</td></tr>
+        <tr><td>Interviewed</td><td class="n">${rIv}</td><td class="n">${pc(rIv, sub)}%</td><td class="n">${pc(rIv, sub)}%</td></tr>
+        <tr><td>Offered</td><td class="n">${rOf}</td><td class="n">${pc(rOf, rIv)}%</td><td class="n">${pc(rOf, sub)}%</td></tr>
+        <tr><td>Joined</td><td class="n">${rJn}</td><td class="n">${pc(rJn, rOf)}%</td><td class="n">${pc(rJn, sub)}%</td></tr></table></div>
+      <div id="rv-reqs" class="sec"><h2>Requirement-wise</h2><span class="count">${openReqs.length}</span></div>
+      <div class="card">${openReqs.length ? `<table class="mini"><tr><th>Role</th><th class="n">Age</th><th class="n">Sub</th><th class="n">Active</th><th>Furthest</th></tr>${reqRows}</table><div class="hint" style="margin-top:7px">● red = aged / no pipeline · ● amber = aging · ● green = healthy — tap a row to open</div>` : '<div class="empty">No open roles</div>'}</div>
+      <div class="sec"><h2>Aging of open roles</h2></div>
+      <div class="card">${buckets.map((b) => bar(b[0], b[1], maxB)).join("")}</div>
+      <div class="sec"><h2>Client-wise</h2><span class="count">${clientRows.length}</span></div>
+      <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
+        ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${clientOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>
+      ${atRisk.length ? `<div class="sec bad"><h2>Needs attention</h2><span class="count">${atRisk.length}</span></div><div class="cardgrid">${atRisk.map(dReqCard).join("")}</div>` : ""}`;
+  }
+
   V.delivery = () => {
     const t = today();
     const reqs = dreqs(), cands = dcands();
+    if ((reqs.length || cands.length) && delivView === "review") return { title: "Delivery · Review", back: true, html: delivToggle() + deliveryReview(reqs, cands), mount: mountDeliv };
     const live_ = reqs.filter((r) => r.Status === "Open");
     const active = cands.filter((c) => dActive(c.Status));
     const due = active.filter((c) => !isNum(c["Next Follow-up"]) || c["Next Follow-up"] <= t)
@@ -1203,7 +1348,7 @@
     const clientRows = Object.entries(byClient).sort((a, b) => b[1].s - a[1].s);
     const empty = !reqs.length && !cands.length;
     return {
-      title: "Delivery", back: true, html: empty ? `<div class="card"><b>No delivery data yet.</b><p class="hint">Import the two Delivery tabs into your sheet (see the delivery guide), or add a requirement below.</p><button class="btn pri" data-act="newreq">Add requirement</button></div>` : `
+      title: "Delivery", back: true, mount: mountDeliv, html: empty ? `<div class="card"><b>No delivery data yet.</b><p class="hint">Import the two Delivery tabs into your sheet (see the delivery guide), or add a requirement below.</p><button class="btn pri" data-act="newreq">Add requirement</button></div>` : delivToggle() + `
       <div class="kpis"><button class="kpi" data-scroll="d-reqs"><div class="v">${live_.length}</div><div class="l">Open roles</div></button>
         <button class="kpi" data-scroll="d-due"><div class="v">${active.length}</div><div class="l">Active cand.</div></button>
         <button class="kpi ${due.length ? "warn" : ""}" data-scroll="d-due"><div class="v">${due.length}</div><div class="l">Follow-ups due</div></button>

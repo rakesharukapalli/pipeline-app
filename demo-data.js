@@ -20,8 +20,9 @@
     deliveryReqs: ["Req ID","Client","SPOC","Role","Req Received","Budget","Priority","Status","Notes"],
     delivery: ["Candidate","Req ID","Client","Role","SPOC","Submitted","Status","Last Follow-up","Next Follow-up","Interview Date","Experience (yrs)","Notice Period","Current CTC (LPA)","Expected CTC (LPA)","Notes"],
     activity: ["Date","Deal ID","Account","Contact","Channel","Outcome","Notes","Next Step","Next Step Date","Logged By"],
+    library: ["Category","Title","Type","Body","Link","Tags","Owner","Updated"],
   };
-  const SHEET = { pipeline: "Pipeline", accounts: "Clients & Logos", meetings: "Meetings", proposals: "Proposals & Rates", requirements: "Requirements", contracts: "Contracts", outreach: "Outreach Log", events: "Events & Referrals", leads: "Leads", targets: "Target Accounts", commitments: "Commitments", intel: "Market Intel", contacts: "Client Contacts", deliveryReqs: "Delivery Reqs", delivery: "Delivery", activity: "Activity Log" };
+  const SHEET = { pipeline: "Pipeline", accounts: "Clients & Logos", meetings: "Meetings", proposals: "Proposals & Rates", requirements: "Requirements", contracts: "Contracts", outreach: "Outreach Log", events: "Events & Referrals", leads: "Leads", targets: "Target Accounts", commitments: "Commitments", intel: "Market Intel", contacts: "Client Contacts", deliveryReqs: "Delivery Reqs", delivery: "Delivery", activity: "Activity Log", library: "Library" };
   const obj = (k, o) => H[k].map((h) => (o[h] === undefined ? "" : o[h]));
   const P = (id, a, c, des, city, src, svc, st, tmp, q, qd, hc, bill, lc, ns, nd, blk, notes, ph, seg, hci) =>
     obj("pipeline", { "Deal ID": id, Account: a, Contact: c, Designation: des, City: city, Source: src, "Service Line": svc, Stage: st, Temperature: tmp, "Qualified?": q, "Qualified Date": qd, "Est. Headcount": hc, "Est. Monthly Billing (INR)": bill, "Last Contact": lc, "Next Step": ns, "Next Step Date": nd, Blocker: blk, Notes: notes, Email: c.split(" ")[0].toLowerCase() + "@" + a.split(" ")[0].toLowerCase() + ".example", Phone: ph, Owner: "Demo", Segment: seg || "", "HC Intelligence": hci || "" });
@@ -67,7 +68,9 @@
     deliveryReqs: [
       obj("deliveryReqs", { "Req ID": "R-001", Client: "Coho Logistics", SPOC: "Sam Rao", Role: "Senior Java Developer", "Req Received": T - 20, Budget: "20 LPA", Priority: "High", Status: "Open" }),
       obj("deliveryReqs", { "Req ID": "R-002", Client: "Contoso Health", SPOC: "Ria Shah", Role: "QA Automation (Selenium)", "Req Received": T - 14, Budget: "5 Factor", Priority: "Medium", Status: "Open" }),
-      obj("deliveryReqs", { "Req ID": "R-003", Client: "Wide World Retail", SPOC: "Arjun Das", Role: "Data Engineer", "Req Received": T - 40, Budget: "18 LPA", Status: "Filled" })],
+      obj("deliveryReqs", { "Req ID": "R-003", Client: "Wide World Retail", SPOC: "Arjun Das", Role: "Data Engineer", "Req Received": T - 40, Budget: "18 LPA", Status: "Filled" }),
+      obj("deliveryReqs", { "Req ID": "R-004", Client: "Northwind Bank GCC", SPOC: "Asha Menon", Role: "12x Java/Spring Developers", "Req Received": T - 35, Budget: "22 LPA", Priority: "High", Status: "Open", Notes: "Bulk hire for Q1 — no profiles submitted yet" }),
+      obj("deliveryReqs", { "Req ID": "R-005", Client: "Tailspin Pharma", SPOC: "Vikram Rao", Role: "Clinical Data Analyst", "Req Received": T - 5, Budget: "14 LPA", Priority: "Medium", Status: "Open" })],
     delivery: [
       obj("delivery", { Candidate: "Imran Qureshi", "Req ID": "R-001", Client: "Coho Logistics", Role: "Senior Java Developer", SPOC: "Sam Rao", Submitted: T - 12, Status: "L2 Scheduled", "Next Follow-up": T + 1, "Interview Date": T + 1, "Experience (yrs)": 7, "Notice Period": "30 Days", "Current CTC (LPA)": 14, "Expected CTC (LPA)": 19 }),
       obj("delivery", { Candidate: "Priya Nel", "Req ID": "R-001", Client: "Coho Logistics", Role: "Senior Java Developer", SPOC: "Sam Rao", Submitted: T - 10, Status: "L1 FB Pending", "Next Follow-up": T - 1, "Experience (yrs)": 6, "Notice Period": "Immediate", "Current CTC (LPA)": 12, "Expected CTC (LPA)": 17 }),
@@ -76,6 +79,22 @@
       obj("delivery", { Candidate: "Dev Anand", "Req ID": "R-002", Client: "Contoso Health", Role: "QA Automation (Selenium)", SPOC: "Ria Shah", Submitted: T - 6, Status: "On Hold", "Next Follow-up": T + 4, "Experience (yrs)": 4 }),
       obj("delivery", { Candidate: "Nisha Varma", "Req ID": "R-003", Client: "Wide World Retail", Role: "Data Engineer", SPOC: "Arjun Das", Submitted: T - 35, Status: "Joined", "Experience (yrs)": 9, "Current CTC (LPA)": 18, "Expected CTC (LPA)": 24 })],
     activity: [obj("activity", { Date: T - 2, "Deal ID": "D-001", Account: "Northwind Bank GCC", Contact: "Asha Menon", Channel: "Call", Outcome: "Requirement shared", Notes: "12 Java devs, Q1", "Next Step": "Send rate card", "Next Step Date": T - 1, "Logged By": "Demo" })],
+    library: [
+      obj("library", { Category: "Email", Title: "First-touch — Greenfield GCC", Type: "email", Tags: "greenfield, cold, outreach", Owner: "Demo", Updated: T - 2,
+        Body: "Subject: Staffing your new India GCC, {{Account}}\n\nHi {{FirstName}},\n\nCongratulations on standing up your new India capability centre. We help greenfield GCCs ramp fast — contract staffing, BOT and RPO — with pre-vetted talent in Hyderabad, Bengaluru, Chennai and Pune.\n\nWorth a 15-minute call next week to share how we helped a similar GCC hit 100+ hires in two quarters?\n\nBest,\nRakesh" }),
+      obj("library", { Category: "Email", Title: "Follow-up nudge (no reply)", Type: "email", Tags: "follow-up, reminder", Owner: "Demo", Updated: T - 4,
+        Body: "Subject: Re: Staffing your India GCC\n\nHi {{FirstName}},\n\nFloating this back to the top — happy to send a one-page capability note or jump on a quick call, whichever is easier. Even if timing isn't right now, I'd value being on your radar for Q1 hiring.\n\nThanks,\nRakesh" }),
+      obj("library", { Category: "Pitch", Title: "30-second elevator pitch", Type: "pitch", Tags: "intro, verbal", Owner: "Demo", Updated: T - 7,
+        Body: "We're an AI-native talent partner for Global Capability Centres in India. We help new and scaling GCCs hire faster — contract and permanent staffing, build-operate-transfer, and managed delivery — backed by a 40,000+ pre-screened talent pool and an AI matching engine that cuts time-to-submit to under 48 hours." }),
+      obj("library", { Category: "Pitch", Title: "Discovery call opener", Type: "script", Tags: "discovery, questions", Owner: "Demo", Updated: T - 10,
+        Body: "1. Where are you in your India GCC journey — net-new or scaling?\n2. What roles are hardest to fill right now?\n3. What's your current time-to-fill, and what would 'great' look like?\n4. Build-operate-transfer vs direct staffing — any preference?\n5. Who owns the hiring decision, and what's the approval path?" }),
+      obj("library", { Category: "Deck", Title: "Capability deck v3", Type: "deck", Tags: "capability, GCC, overview", Owner: "Demo", Updated: T - 8,
+        Link: "https://drive.google.com/file/d/EXAMPLE-capability-deck/view" }),
+      obj("library", { Category: "One-pager", Title: "BOT model — one-pager", Type: "pdf", Tags: "BOT, build-operate-transfer", Owner: "Demo", Updated: T - 14,
+        Link: "https://drive.google.com/file/d/EXAMPLE-bot-onepager/view" }),
+      obj("library", { Category: "Rate card", Title: "Standard rate card (FY26)", Type: "pdf", Tags: "rates, pricing", Owner: "Demo", Updated: T - 20,
+        Link: "https://drive.google.com/file/d/EXAMPLE-ratecard/view" }),
+    ],
   };
   const out = {};
   for (const k of Object.keys(tables)) out[k] = fixAddr(k, tbl(k, tables[k]));
