@@ -30,6 +30,19 @@
   const live = (t) => rows(t).filter((r) => hasData(t, r));
   const deals = () => live("pipeline").filter((r) => r.Account);
   const dealById = (id) => deals().find((r) => r["Deal ID"] === id);
+  // Pull phone/email from Client Contacts or Leads when the pipeline row itself has none
+  function contactInfoFor(r) {
+    if (r.Phone || r.Email) return { Phone: r.Phone || "", Email: r.Email || "", src: "" };
+    const nm = String(r.Contact || "").trim().toLowerCase(); if (!nm) return { Phone: "", Email: "", src: "" };
+    const first = nm.split(/\s+/)[0];
+    const cc = live("contacts").find((c) => String(c.SPOC || "").trim().toLowerCase() === nm)
+            || live("contacts").find((c) => c.Client === r.Account && String(c.SPOC || "").toLowerCase().indexOf(first) >= 0 && (c.Phone || c.Email))
+            || live("contacts").find((c) => String(c.SPOC || "").toLowerCase().indexOf(first) >= 0 && (c.Phone || c.Email));
+    if (cc && (cc.Phone || cc.Email)) return { Phone: cc.Phone || "", Email: cc.Email || "", src: "Client Contacts" };
+    const ld = live("leads").find((l) => String(l.Name || "").trim().toLowerCase() === nm && (l.Phone || l.Email)) || live("leads").find((l) => String(l.Name || "").toLowerCase().indexOf(first) >= 0 && (l.Phone || l.Email));
+    if (ld && (ld.Phone || ld.Email)) return { Phone: ld.Phone || "", Email: ld.Email || "", src: "Leads" };
+    return { Phone: "", Email: "", src: "" };
+  }
   // GCC classification: reads the Segment field; falls back to [GF]/[BF] or greenfield/brownfield in Notes
   const gccType = (r) => {
     const s = String(r.Segment || "").toLowerCase();
@@ -398,14 +411,15 @@
       .sort((a, b) => (b.d || 0) - (a.d || 0));
     const others = deals().filter((o) => o.Account === r.Account && o["Deal ID"] !== r["Deal ID"]);
     const acc = live("accounts").find((a) => a.Account === r.Account);
-    const tel = telLink(r.Phone), wa = waLink(r.Phone);
+    const ci = contactInfoFor(r), phone = ci.Phone, email = ci.Email;
+    const tel = telLink(phone), wa = waLink(phone);
     const html = `
       <div class="hero"><h2>${esc(r.Account)}</h2><div class="sub">${esc(r.Contact)}${r.Designation ? " · " + esc(r.Designation) : ""}${r.City ? " · " + esc(r.City) : ""}</div>
         <div class="chips"><span class="chip">${esc(r.Stage)}</span><span class="chip">${esc(r.Temperature || "-")}</span>${r["Qualified?"] === "Y" && r.Stage !== "Qualified" ? '<span class="chip">Qualified</span>' : ""}<span class="chip">${esc(r["Service Line"] || "")}</span>${x.days != null ? `<span class="chip">Last touch ${x.days}d ago</span>` : ""}</div></div>
       <div class="quick">
         <a class="${tel ? "" : "dis"}" href="${tel || "#"}" data-act="call" data-id="${esc(r["Deal ID"])}">${I.call}Call</a>
         <a class="${wa ? "" : "dis"}" href="${wa || "#"}" target="_blank" rel="noopener" data-act="wa" data-id="${esc(r["Deal ID"])}">${I.wa}WhatsApp</a>
-        <a class="${r.Email ? "" : "dis"}" href="mailto:${esc(r.Email)}" data-act="mail" data-id="${esc(r["Deal ID"])}">${I.mail}Email</a>
+        <a class="${email ? "" : "dis"}" href="mailto:${esc(email)}" data-act="mail" data-id="${esc(r["Deal ID"])}">${I.mail}Email</a>
         <a href="${liLink(r.Contact, r.Account)}" target="_blank" rel="noopener">${I.li}LinkedIn</a>
         <button data-act="log" data-id="${esc(r["Deal ID"])}">${I.log}Log</button>
       </div>
@@ -428,8 +442,8 @@
         <div>Source</div><div>${esc(r.Source)}</div>
         <div>Est. headcount</div><div>${esc(r["Est. Headcount"] || "-")}</div>
         <div>Est. billing</div><div>${fmtL(r["Est. Monthly Billing (INR)"]) || "-"}${r["Est. Monthly Billing (INR)"] ? " / month" : ""}</div>
-        <div>Phone</div><div>${esc(r.Phone || "-")}</div>
-        <div>Email</div><div style="word-break:break-all">${esc(r.Email || "-")}</div>
+        <div>Phone</div><div>${esc(phone || "-")}${ci.src && phone ? ` <span style="font-size:11px;color:var(--ink-3)">(from ${esc(ci.src)})</span>` : ""}</div>
+        <div>Email</div><div style="word-break:break-all">${esc(email || "-")}${ci.src && email && !phone ? ` <span style="font-size:11px;color:var(--ink-3)">(from ${esc(ci.src)})</span>` : ""}</div>
         <div>Notes</div><div>${esc(r.Notes || "-")}</div>
       </div></div>
       ${acc ? `<div class="card deal" data-go="#/clients/${encodeURIComponent(acc.Account)}"><div class="main"><div class="t1">Client account: ${esc(acc.Account)}</div><div class="t2">${esc(acc["Current Stage"])} · ${esc(acc["Next Step"] || "")}</div></div></div>` : ""}
@@ -447,7 +461,7 @@
   };
 
   // ---------------- LOG TOUCH
-  const OUTCOMES = ["No answer", "Connected", "Replied", "Meeting booked", "Requirement shared", "Call back later", "Not interested"];
+  const OUTCOMES = ["No answer", "Call Busy", "Connected", "Replied", "Meeting booked", "Requirement shared", "Call back later", "Not interested"];
   const NEXT_SUGGEST = ["Follow-up call", "Send capability deck", "Send rate card", "Share profiles", "Book meeting", "Proposal follow-up", "Check-in next quarter"];
   const CH_MAP = { Call: "Cold Call", WhatsApp: "Cold Call", Email: "Email", LinkedIn: "LinkedIn" };
   function logTouch(r, preset = {}) {
@@ -457,9 +471,9 @@
       <div id="mtgbox" class="hidden"><div class="f2">${field("Meeting date", "mdate", "", "date")}${field("Time", "mtime", "11:00", "time")}</div>
         <div class="f"><label>With decision maker?</label>${chips("mdm", ["Y", "N"], "Y")}</div></div>
       ${field("Notes", "notes", "", "textarea", 'placeholder="What happened? Need, timeline, budget, who decides..."')}
-      <div class="f"><label>Next step</label><input name="next" value="${esc(r["Next Step"] || "")}" list="nsugg" placeholder="e.g. Send rate card"></div>
-      ${datalist("nsugg", NEXT_SUGGEST)}
-      <div class="chips" style="margin:-4px 0 10px" id="nchips">${NEXT_SUGGEST.slice(0, 5).map((s) => `<button type="button" class="pick" data-s="${esc(s)}">${esc(s)}</button>`).join("")}</div>
+      <div class="f"><label>Next step</label>
+        <select name="nextsel" id="nextsel"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}<option value="__other">Other (type below)…</option></select>
+        <input name="next" id="nextinput" value="${esc(r["Next Step"] || "")}" placeholder="e.g. Send rate card" style="margin-top:6px"></div>
       <div class="f"><label>Next step date</label>${dateChips("ndate", "")}</div>
       <div class="f"><label>Temperature</label>${chips("temp", L("Temp"), r.Temperature)}</div>
       ${select("Stage", "stage", L("Stage"), r.Stage, false)}
@@ -468,7 +482,7 @@
       <button class="btn pri block" id="save">Save</button>`;
     sheet(`Log touch · ${r.Contact}`, html, (el, close) => {
       wireDateChips(el);
-      $("#nchips", el).onclick = (e) => { const b = e.target.closest(".pick"); if (b) $('[name="next"]', el).value = b.dataset.s; };
+      const nsel = $("#nextsel", el); if (nsel) nsel.onchange = () => { const v = nsel.value; if (v === "__other") { $("#nextinput", el).focus(); } else if (v) { $("#nextinput", el).value = v; } };
       const ocG = $('.chips[data-name="oc"]', el);
       ocG.addEventListener("pick", (e) => {
         const v = e.detail;
@@ -499,7 +513,7 @@
         const oc_ch = CH_MAP[ch];
         if (oc_ch) {
           API.inc(oc_ch, "Activities", 1);
-          if (!["No answer"].includes(oc)) API.inc(oc_ch, "Responses", 1);
+          if (!["No answer", "Call Busy"].includes(oc)) API.inc(oc_ch, "Responses", 1);
           if (oc === "Meeting booked") API.inc(oc_ch, "Meetings Booked", 1);
         }
         if (oc === "Meeting booked" && isNum(f.mdate)) {
@@ -1233,7 +1247,7 @@
       <i class="dotT ${dWon(st) ? "Hot" : DLOST.has(st) ? "" : "Warm"}"></i>
       <div class="main"><div class="t1"><span>${esc(c.Candidate)}</span>${c._pending ? '<span class="pend">• saving</span>' : ""}</div>
       <div class="t2">${esc(c.Role || "")}${c.Client ? " · " + esc(c.Client) : ""}</div>
-      <div class="meta">${statusChip(st)}${isNum(c["Interview Date"]) ? `<span class="chip ${c["Interview Date"] < today() ? "bad" : "stage"}">📅 ${esc(D.fmt(c["Interview Date"]))}</span>` : ""}${isNum(c["Expected CTC (LPA)"]) ? `<span class="chip">ECTC ${c["Expected CTC (LPA)"]}L</span>` : ""}${c["Notice Period"] ? `<span class="chip">${esc(c["Notice Period"])}</span>` : ""}${isNum(c["Next Follow-up"]) ? `<span class="chip ${c["Next Follow-up"] < today() ? "bad" : ""}">${esc(D.fmt(c["Next Follow-up"]))}</span>` : ""}</div>
+      <div class="meta">${statusChip(st)}${isNum(c["Interview Date"]) ? `<span class="chip ${c["Interview Date"] < today() ? "bad" : "stage"}">📅 ${esc(D.fmt(c["Interview Date"]))}${c["Interview Time"] ? " " + esc(c["Interview Time"]) : ""}</span>` : ""}${isNum(c["Expected CTC (LPA)"]) ? `<span class="chip">ECTC ${c["Expected CTC (LPA)"]}L</span>` : ""}${c["Notice Period"] ? `<span class="chip">${esc(c["Notice Period"])}</span>` : ""}${isNum(c["Next Follow-up"]) ? `<span class="chip ${c["Next Follow-up"] < today() ? "bad" : ""}">${esc(D.fmt(c["Next Follow-up"]))}</span>` : ""}</div>
       <div class="acts"><button class="pri" data-act="dlog" data-sig='${esc(c._sig)}'>Log / move</button>${c.Phone ? "" : ""}</div></div></div>`;
   }
   function dReqCard(r) {
@@ -1351,7 +1365,7 @@
   const qAge = (c) => { const t = today(); if (isNum(c["Last Follow-up"])) return t - c["Last Follow-up"]; if (isNum(c.Submitted)) return t - c.Submitted; return null; };
   const qKind = (c) => { const st = c.Status || "", stg = STAGE_OF[st], a = qAge(c) || 0; if (stg === "Offer") return a >= 3 ? "red" : "amb"; if (/FB Pending/i.test(st)) return a >= 4 ? "red" : "amb"; if (SCHEDULED.has(st)) return (isNum(c["Interview Date"]) && c["Interview Date"] < today()) ? "amb" : "grn"; if (/Screen/i.test(st)) return a >= 3 ? "red" : "amb"; return "amb"; };
   const qNext = (c) => { const st = c.Status || "", stg = STAGE_OF[st], a = qAge(c) || 0, t = today(); if (stg === "Offer") return "Confirm acceptance & joining date"; if (/FB Pending/i.test(st)) return `Chase client for ${stg} feedback` + (a >= 4 ? " — overdue" : ""); if (SCHEDULED.has(st)) { if (isNum(c["Interview Date"])) { if (c["Interview Date"] < t) return "Collect " + stg + " feedback"; if (c["Interview Date"] === t) return "Interview today — confirm"; } return "Prep candidate for " + stg; } if (/Screen/i.test(st)) return "Screen & submit to client"; return "Follow up"; };
-  const qAgeLabel = (c) => { if (SCHEDULED.has(c.Status || "") && isNum(c["Interview Date"]) && c["Interview Date"] >= today()) return D.fmt(c["Interview Date"]); const a = qAge(c); return a == null ? "—" : a + "d"; };
+  const qAgeLabel = (c) => { if (SCHEDULED.has(c.Status || "") && isNum(c["Interview Date"]) && c["Interview Date"] >= today()) return D.fmt(c["Interview Date"]) + (c["Interview Time"] ? " " + c["Interview Time"] : ""); const a = qAge(c); return a == null ? "—" : a + "d"; };
   function qPill(c) {
     const k = qKind(c), chipCls = { red: "bad", amb: "warn", grn: "ok" }[k], col = k === "red" ? "#B3201F" : k === "amb" ? "#8A5A00" : "#17874F";
     const note = c.Notes ? String(c.Notes).split("|")[0].trim() : "";
@@ -1479,7 +1493,7 @@
     sheet("Update · " + c.Candidate, `
       <div class="f"><label>Quick move</label>${chips("stg", ["L1 Scheduled", "L1 FB Pending", "L2 Scheduled", "L2 FB Pending", "L3 Scheduled", "Final Select", "Offer Accepted", "On Hold", "Joined"], DSTATUS.includes(c.Status) ? c.Status : "")}</div>
       ${select("Or pick any status", "status", DSTATUS, c.Status, false)}
-      ${field("Interview date (if scheduled)", "iv", c["Interview Date"], "date")}
+      <div class="f2">${field("Interview date (if scheduled)", "iv", c["Interview Date"], "date")}${field("Interview time", "ivt", c["Interview Time"] || "", "time")}</div>
       ${field("Note (feedback / next step)", "notes", "", "textarea")}
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
       <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal" checked></div>
@@ -1489,8 +1503,8 @@
       $("#save", el).onclick = () => {
         const f = form(el), t = today();
         const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
-        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
-        if (f.cal && isNum(f.iv)) API.event(reminderEvent(`Interview: ${c.Candidate} - ${c.Role || ""} (${c.Client || ""})`, f.iv, "10:00", `Candidate: ${esc(c.Candidate)}\nRole: ${esc(c.Role || "")}\nClient: ${esc(c.Client || "")}\nStatus: ${esc(f.status)}`, 60));
+        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", "Interview Time": f.ivt || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
+        if (f.cal && isNum(f.iv)) API.event(reminderEvent(`Interview: ${c.Candidate} - ${c.Role || ""} (${c.Client || ""})`, f.iv, f.ivt || "10:00", `Candidate: ${esc(c.Candidate)}\nRole: ${esc(c.Role || "")}\nClient: ${esc(c.Client || "")}\nStatus: ${esc(f.status)}`, 60));
         close(); toast("Updated · " + c.Candidate); render();
       };
     });
@@ -1509,7 +1523,8 @@
       ${select("Status", "status", DSTATUS, c.Status, false)}
       <div class="f2">${field("Experience (yrs)", "Experience (yrs)", c["Experience (yrs)"], "number", 'step="0.1" inputmode="decimal"')}${field("Notice period", "Notice Period", c["Notice Period"])}</div>
       <div class="f2">${field("Current CTC (LPA)", "Current CTC (LPA)", c["Current CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}${field("Expected CTC (LPA)", "Expected CTC (LPA)", c["Expected CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}</div>
-      <div class="f2">${field("Interview date", "Interview Date", c["Interview Date"], "date")}<div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div></div>
+      <div class="f2">${field("Interview date", "Interview Date", c["Interview Date"], "date")}${field("Interview time", "Interview Time", c["Interview Time"] || "", "time")}</div>
+      <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
       ${field("Notes", "Notes", c.Notes, "textarea")}
       <button class="btn pri block" id="save">${isNew ? "Add candidate" : "Save"}</button>`, (el, close) => {
       wireDateChips(el);
@@ -1523,7 +1538,7 @@
         if (!f.Candidate) return toast("Candidate name is required", "warn");
         const rid = req ? req["Req ID"] : (pick && pick.value ? pick.value.split(" · ")[0] : c["Req ID"] || "");
         const v = { Candidate: f.Candidate, "Req ID": rid, Client: f.Client, Role: f.Role, SPOC: f.SPOC, Submitted: f.Submitted, Status: f.status,
-          "Next Follow-up": f.nf || "", "Interview Date": f["Interview Date"] || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
+          "Next Follow-up": f.nf || "", "Interview Date": f["Interview Date"] || "", "Interview Time": f["Interview Time"] || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
         if (isNew) API.add("delivery", v); else API.update("delivery", c, v);
         close(); toast("Saved"); render();
       };
