@@ -41,6 +41,7 @@
     P("D-012","Alpine Foods GCC","Site Head (TBC)","Site Head","Bengaluru","Direct Outreach","Contract Staffing","Contacted","Cool","N","","","",T-5,"Follow up on staffing support",T+2,"","[BF·BLR] Expanding GCC - FMCG satellite hub; reached out","9800000012","GCC-Brownfield","~1,200 and growing"),
     P("D-013","Harbor Logistics GCC","Site Head (TBC)","Site Head","Chennai","Direct Outreach","BOT / GCC Build","Contact Established","Warm","N","","","",T-3,"","","","[GF·CHE] New India GCC - logistics; reached out","9800000013","GCC-Greenfield","First centre - 250+ jobs planned"),
     P("D-014","Zenith Insurance GCC","Site Head (TBC)","Site Head","Pune","Direct Outreach","Contract Staffing","Contacted","Cool","N","","","",T-6,"Follow up on staffing support",T+9,"","[BF·PUN] Expanding GCC - insurance; reached out","9800000014","GCC-Brownfield","~4,000 India HC"),
+    P("D-021","ZF Group","Kotha Suresh","Sr Executive & Data Analyst","Hyderabad","Direct Outreach","Contract Staffing","Discovery Meeting","Hot","N","","","",T-12,"Follow-up call",T+6,"No response","Met at event; details in Client Contacts",""),
   ];
   const tbl = (k, rows) => ({ address: `'${SHEET[k]}'!A3:${"A"}${3 + rows.length}`, values: [H[k]].concat(rows.length ? rows : [H[k].map(() => "")]) });
   const fixAddr = (k, t) => { const n = H[k].length; let s = "", x = n; while (x > 0) { const m = (x - 1) % 26; s = String.fromCharCode(65 + m) + s; x = Math.floor((x - 1) / 26); } t.address = `'${SHEET[k]}'!A3:${s}${3 + t.values.length - 1}`; return t; };
@@ -64,7 +65,9 @@
     targets: [obj("targets", { Account: "Trey Research", Recommendation: "Add", Reason: "Positive at conclave; BOT" }), obj("targets", { Account: "Blue Yonder Labs", Recommendation: "Drop", Reason: "In-house only" })],
     commitments: [obj("commitments", { "Stand-up Date": T - 1, Commitment: "Close Contoso rate negotiation", Account: "Contoso Health", Owner: "Demo", "Due Date": T + 6, Status: "Committed" })],
     intel: [obj("intel", { Date: T - 4, "Account / Market": "GCCs", Insight: "BOT model in demand", Implication: "Lead with BOT", "Action / Plan": "BOT one-pager", Type: "Intel" }), obj("intel", { Date: T - 4, "Account / Market": "Pharma", Insight: "Budgets reopen in Q1", "Action / Plan": "January re-engagement", Type: "Next-month plan" })],
-    contacts: [obj("contacts", { SPOC: "Lena Fox", Client: "Graphic Design Inst", City: "Pune", Country: "India", BU: "R&D", Role: "Engineering Manager", "Last Follow-up": T - 20, Status: "Active", Phone: "9800000099" })],
+    contacts: [obj("contacts", { SPOC: "Lena Fox", Client: "Graphic Design Inst", City: "Pune", Country: "India", BU: "R&D", Role: "Engineering Manager", "Last Follow-up": T - 20, Status: "Active", Phone: "9800000099" }),
+      obj("contacts", { SPOC: "Kotha Kummari Suresh Kumar", Client: "ZF Group", City: "Hyderabad", Country: "India", BU: "Data", Role: "Sr Executive & Data Analyst", "Last Follow-up": T - 12, Status: "Active", Phone: "9800054321", Email: "suresh.kotha@zf.example" }),
+      obj("contacts", { SPOC: "Ganesh Rao", Client: "Contoso Health", City: "Bengaluru", Country: "India", BU: "QA", Role: "Delivery Lead", "Last Follow-up": T - 3, Status: "No demand", Phone: "9800054322" })],
     deliveryReqs: [
       obj("deliveryReqs", { "Req ID": "R-001", Client: "Coho Logistics", SPOC: "Sam Rao", Role: "Senior Java Developer", "Req Received": T - 20, Budget: "20 LPA", Priority: "High", Status: "Open" }),
       obj("deliveryReqs", { "Req ID": "R-002", Client: "Contoso Health", SPOC: "Ria Shah", Role: "QA Automation (Selenium)", "Req Received": T - 14, Budget: "5 Factor", Priority: "Medium", Status: "Open" }),

@@ -32,16 +32,21 @@
   const dealById = (id) => deals().find((r) => r["Deal ID"] === id);
   // Pull phone/email from Client Contacts or Leads when the pipeline row itself has none
   function contactInfoFor(r) {
-    if (r.Phone || r.Email) return { Phone: r.Phone || "", Email: r.Email || "", src: "" };
-    const nm = String(r.Contact || "").trim().toLowerCase(); if (!nm) return { Phone: "", Email: "", src: "" };
-    const first = nm.split(/\s+/)[0];
-    const cc = live("contacts").find((c) => String(c.SPOC || "").trim().toLowerCase() === nm)
-            || live("contacts").find((c) => c.Client === r.Account && String(c.SPOC || "").toLowerCase().indexOf(first) >= 0 && (c.Phone || c.Email))
-            || live("contacts").find((c) => String(c.SPOC || "").toLowerCase().indexOf(first) >= 0 && (c.Phone || c.Email));
-    if (cc && (cc.Phone || cc.Email)) return { Phone: cc.Phone || "", Email: cc.Email || "", src: "Client Contacts" };
-    const ld = live("leads").find((l) => String(l.Name || "").trim().toLowerCase() === nm && (l.Phone || l.Email)) || live("leads").find((l) => String(l.Name || "").toLowerCase().indexOf(first) >= 0 && (l.Phone || l.Email));
-    if (ld && (ld.Phone || ld.Email)) return { Phone: ld.Phone || "", Email: ld.Email || "", src: "Leads" };
-    return { Phone: "", Email: "", src: "" };
+    let phone = r.Phone || "", email = r.Email || "", src = "";
+    if (phone && email) return { Phone: phone, Email: email, src: "" };
+    const nm = String(r.Contact || "").trim().toLowerCase();
+    if (nm) {
+      const words = nm.split(/\s+/).filter((w) => w.length >= 3);
+      const overlap = (a) => words.some((w) => a.indexOf(w) >= 0);
+      const pool = live("contacts").map((c) => ({ nm: String(c.SPOC || "").toLowerCase(), acc: c.Client, Phone: c.Phone, Email: c.Email, src: "Client Contacts" }))
+        .concat(live("leads").map((l) => ({ nm: String(l.Name || "").toLowerCase(), acc: l.Organization, Phone: l.Phone, Email: l.Email, src: "Leads" })));
+      const m = pool.find((c) => c.nm === nm)
+            || pool.find((c) => c.acc === r.Account && (c.nm.indexOf(nm) >= 0 || nm.indexOf(c.nm) >= 0) && (c.Phone || c.Email))
+            || pool.find((c) => c.acc === r.Account && overlap(c.nm) && (c.Phone || c.Email))
+            || pool.find((c) => (c.nm.indexOf(nm) >= 0 || (c.nm && nm.indexOf(c.nm) >= 0)) && (c.Phone || c.Email));
+      if (m) { if (!phone && m.Phone) { phone = m.Phone; src = m.src; } if (!email && m.Email) { email = m.Email; src = src || m.src; } }
+    }
+    return { Phone: phone, Email: email, src: src };
   }
   // GCC classification: reads the Segment field; falls back to [GF]/[BF] or greenfield/brownfield in Notes
   const gccType = (r) => {
@@ -556,12 +561,15 @@
       <div class="f"><label>Temperature</label>${chips("Temperature", L("Temp"), r.Temperature)}</div>
       <div class="f2">${select("Qualified?", "Qualified?", ["Y", "N"], r["Qualified?"])}${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}</div>
       <div class="f2">${field("Est. headcount", "Est. Headcount", r["Est. Headcount"], "number", 'inputmode="numeric"')}${field("Est. billing (₹ lakhs / month)", "billL", isNum(r["Est. Monthly Billing (INR)"]) ? r["Est. Monthly Billing (INR)"] / 1e5 : "", "number", 'step="0.1" inputmode="decimal"')}</div>
-      ${field("Next step", "Next Step", r["Next Step"])}
+      <div class="f"><label>Next step</label>
+        <select id="nextsel2"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}<option value="__other">Other (type below)…</option></select>
+        <input name="Next Step" id="nextinput2" value="${esc(r["Next Step"] || "")}" placeholder="e.g. Send rate card" style="margin-top:6px"></div>
       <div class="f"><label>Next step date</label>${dateChips("Next Step Date", r["Next Step Date"])}</div>
       ${field("Notes", "Notes", r.Notes, "textarea")}
       <button class="btn pri block" id="save">${isNew ? "Add to pipeline" : "Save changes"}</button>`;
     sheet(isNew ? "New opportunity" : "Edit " + r.Contact, html, (el, close) => {
       wireDateChips(el);
+      const nsel = $("#nextsel2", el); if (nsel) nsel.onchange = () => { const v = nsel.value; if (v === "__other") $("#nextinput2", el).focus(); else if (v) $("#nextinput2", el).value = v; };
       $("#save", el).onclick = () => {
         const f = form(el);
         if (!f.Account || !f.Contact) return toast("Account and contact are required", "warn");
