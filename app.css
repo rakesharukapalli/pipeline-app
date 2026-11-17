@@ -50,10 +50,15 @@ h1,h2,h3,b,strong,.greet{font-family:"Sora","Space Grotesk",sans-serif}
 
 main{padding:14px 14px calc(var(--nav-h) + var(--safe-b) + 90px);max-width:1000px;margin:0 auto}
 /* responsive card grid: 2 per row on phones, 3 on tablet, 4 on desktop */
-.cardgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start}
+.cardgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}
 @media(min-width:560px){.cardgrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}}
 @media(min-width:900px){.cardgrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-.cardgrid>.card{margin-bottom:0;padding:12px}
+.cardgrid>.card{margin-bottom:0;padding:12px;height:100%}
+.tlmore{margin-top:8px}
+.tlmore>summary{cursor:pointer;font-weight:700;font-size:13px;color:var(--ink-2);list-style:none}
+.tlmore>summary::-webkit-details-marker{display:none}
+.tlmore>summary::before{content:"▸ "}
+.tlmore[open]>summary::before{content:"▾ "}
 .cardgrid .deal{gap:8px}
 .cardgrid .acts{gap:6px;margin-top:9px}
 .cardgrid .acts button{padding:7px 9px;font-size:12px;border-radius:11px;flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center}
@@ -271,3 +276,15 @@ table.mini td.n{text-align:right;font-variant-numeric:tabular-nums}
 .iconbtn{width:34px;height:34px;border:2px solid var(--b);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-right:4px;color:#fff;
   background:linear-gradient(#333,#0a0a0a);box-shadow:inset 0 2px 2px rgba(255,255,255,.35),inset 0 -4px 6px rgba(0,0,0,.75)}
 .iconbtn svg{width:19px;height:19px}
+
+/* pipeline filters panel */
+.filters{margin:0 0 10px;border:2px solid var(--b);border-radius:14px;background:var(--card);padding:8px 12px}
+.filters>summary{cursor:pointer;font-weight:800;font-size:13px;list-style:none;padding:3px 0}
+.filters>summary::-webkit-details-marker{display:none}
+.filters>summary::before{content:"⚲ ";opacity:.6}
+.fgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+.fsel{width:100%;padding:9px 10px;border:2px solid var(--b);border-radius:10px;background:var(--bg);color:var(--ink);font-size:13px;font-weight:600}
+.frow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap}
+.fchk{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600}
+.fchk input{width:17px;height:17px}
+@media(min-width:620px){.fgrid{grid-template-columns:repeat(3,1fr)}}
