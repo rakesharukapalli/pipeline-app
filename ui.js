@@ -153,8 +153,28 @@
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
     lib: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h7M9 11h5"/></svg>',
     copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
-    tt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>',
+    tt: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>',
+    link: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
   };
+  // Conversation links (doc / Outlook thread / drive) — parse from a dedicated field and from Notes
+  const URL_RE = /(https?:\/\/[^\s,;]+)/gi;
+  function linkList(...sources) {
+    const set = [];
+    sources.forEach((s) => (String(s == null ? "" : s).match(URL_RE) || []).forEach((u) => { u = u.replace(/[.,)]+$/, ""); if (set.indexOf(u) < 0) set.push(u); }));
+    return set;
+  }
+  function linkLabel(u) {
+    try {
+      const h = new URL(u).hostname.replace(/^www\./, "").toLowerCase();
+      if (/outlook\.|office\.|live\.com|owa/.test(h)) return "Outlook thread";
+      if (/mail\.google|gmail/.test(h)) return "Gmail thread";
+      if (/docs\.google/.test(h)) return "Google Doc";
+      if (/drive\.google/.test(h)) return "Drive file";
+      if (/sharepoint|onedrive|1drv/.test(h)) return "SharePoint";
+      return h;
+    } catch (e) { return "Link"; }
+  }
+  const linkChips = (arr) => (arr.length ? `<div class="chips" style="gap:6px;flex-wrap:wrap;margin-top:2px">${arr.map((u) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener">${I.link} ${esc(linkLabel(u))}</a>`).join("")}</div>` : "");
 
   // ------------------------------------------------------------------ toast / sheet
   let toastT;
@@ -515,6 +535,7 @@
         <div>Notes</div><div>${esc(r.Notes || "-")}</div>
       </div></div>
       ${acc ? `<div class="card deal" data-go="#/clients/${encodeURIComponent(acc.Account)}"><div class="main"><div class="t1">Client account: ${esc(acc.Account)}</div><div class="t2">${esc(acc["Current Stage"])} · ${esc(acc["Next Step"] || "")}</div></div></div>` : ""}
+      ${(() => { const ls = linkList(r.Links, r.Notes); return ls.length ? `<div class="card"><div style="font-size:12px;color:var(--ink-3);margin-bottom:4px">CONVERSATION LINKS</div>${linkChips(ls)}</div>` : ""; })()}
       <div class="sec"><h2>Timeline</h2><span class="count">${tl.length}</span></div>
       <div class="card">${tl.length ? `<div class="tl">${tl.map((i) => `<div class="it"><div class="d">${esc(D.fmt(i.d, { abs: 1, year: 1 }))}</div><div>${i.h}</div>${i.s ? `<div style="font-size:13px;color:var(--ink-2)">${esc(i.s)}</div>` : ""}</div>`).join("")}</div>` : '<div class="empty">No activity logged in the app yet. Earlier history is in Notes.</div>'}</div>
       ${others.length ? `<div class="sec"><h2>Other contacts at ${esc(r.Account)}</h2><span class="count">${others.length}</span></div>${others.map((o) => dealCard(o, { noActs: true })).join("")}` : ""}`;
@@ -629,6 +650,7 @@
         <input name="Next Step" id="nextinput2" value="${esc(r["Next Step"] || "")}" placeholder="e.g. Send rate card" style="margin-top:6px"></div>
       <div class="f"><label>Next step date</label>${dateChips("Next Step Date", r["Next Step Date"])}</div>
       ${field("Notes", "Notes", r.Notes, "textarea")}
+      ${field("Conversation links (doc / Outlook thread — one per line)", "Links", r.Links, "textarea")}
       <button class="btn pri block" id="save">${isNew ? "Add to pipeline" : "Save changes"}</button>`;
     sheet(isNew ? "New opportunity" : "Edit " + r.Contact, html, (el, close) => {
       wireDateChips(el);
@@ -638,7 +660,7 @@
         if (!f.Account || !f.Contact) return toast("Account and contact are required", "warn");
         const v = { Account: f.Account, Contact: f.Contact, Designation: f.Designation, Phone: f.Phone, Email: f.Email, City: f.City, Source: f.Source,
           "Service Line": f["Service Line"], Stage: f.Stage, Temperature: chipVal(el, "Temperature"), "Qualified?": f["Qualified?"], Blocker: f.Blocker,
-          "Est. Headcount": f["Est. Headcount"], "Est. Monthly Billing (INR)": f.billL === "" ? "" : Math.round(f.billL * 1e5), "Next Step": f["Next Step"], "Next Step Date": f["Next Step Date"], Notes: f.Notes };
+          "Est. Headcount": f["Est. Headcount"], "Est. Monthly Billing (INR)": f.billL === "" ? "" : Math.round(f.billL * 1e5), "Next Step": f["Next Step"], "Next Step Date": f["Next Step Date"], Notes: f.Notes, Links: f.Links };
         if (v["Qualified?"] === "Y" && !isNum(r["Qualified Date"])) v["Qualified Date"] = today();
         if (isNew) { v["Deal ID"] = nextDealId(); v.Owner = C.owner; v["Last Contact"] = preset["Last Contact"] || ""; API.add("pipeline", v); close(); toast("Added " + v.Account); location.hash = "#/deal/" + encodeURIComponent(v["Deal ID"]); }
         else { API.update("pipeline", r, v); close(); toast("Saved"); render(); }
@@ -918,15 +940,17 @@
         <div class="f2">${field("Phone", "Phone", "", "tel")}${field("Email", "Email", "", "email")}</div>
         <div class="f"><label>Response</label>${chips("resp", L("Response"), "")}</div>
         ${field("What they said / need", "Comments", "", "textarea")}
+        ${field("Conversation links (doc / Outlook thread — one per line)", "Links", "", "textarea")}
         <div class="toggle"><div><b>Also add to pipeline</b><div class="hint">Creates an opportunity with this event as source</div></div><input type="checkbox" name="topipe"></div>
         <button class="btn pri block" id="saveLead">Save lead</button></div>
       ${section("Recent leads", recent.map((l) => `<div class="card deal"><div class="main"><div class="t1"><span>${esc(l.Name)}</span></div><div class="t2">${esc(l.Organization)}${l.Designation ? " · " + esc(l.Designation) : ""}</div>
-        <div class="meta"><span class="chip">${esc(l.Event)}</span>${l.Response ? `<span class="chip ${l.Response === "Positive" ? "ok" : ""}">${esc(l.Response)}</span>` : ""}${deals().some((d) => d.Account === l.Organization) ? '<span class="chip stage">In pipeline</span>' : `<button class="btn" data-act="lead2pipe" data-sig='${esc(l._sig)}'>→ Pipeline</button>`}</div></div></div>`))}`,
+        <div class="meta"><span class="chip">${esc(l.Event)}</span>${l.Response ? `<span class="chip ${l.Response === "Positive" ? "ok" : ""}">${esc(l.Response)}</span>` : ""}${deals().some((d) => d.Account === l.Organization) ? '<span class="chip stage">In pipeline</span>' : `<button class="btn" data-act="lead2pipe" data-sig='${esc(l._sig)}'>→ Pipeline</button>`}<button class="btn" data-act="editlead" data-sig='${esc(l._sig)}'>Edit / links</button></div>
+        ${linkChips(linkList(l.Links, l.Comments))}</div></div>`))}`,
       mount: (el) => {
         wireChips(el);
         $("#saveLead", el).onclick = () => {
           const f = form(el); if (!f.Name || !f.Organization) return toast("Name and organization are required", "warn");
-          const v = { Event: f.Event, Name: f.Name, Organization: f.Organization, Location: f.Location, Designation: f.Designation, Response: chipVal(el, "resp"), Comments: f.Comments, Email: f.Email, Phone: f.Phone, "Last Follow-up": today() };
+          const v = { Event: f.Event, Name: f.Name, Organization: f.Organization, Location: f.Location, Designation: f.Designation, Response: chipVal(el, "resp"), Comments: f.Comments, Links: f.Links, Email: f.Email, Phone: f.Phone, "Last Follow-up": today() };
           API.add("leads", v); localStorage.setItem("pp.lastEvent", f.Event);
           if (f.topipe) API.add("pipeline", { "Deal ID": nextDealId(), Account: f.Organization, Contact: f.Name, Designation: f.Designation, City: f.Location, Source: f.Event, "Service Line": "Contract Staffing", Stage: "Contact Established", Temperature: v.Response === "Positive" ? "Warm" : "Cool", "Qualified?": "N", "Last Contact": today(), "Next Step": "Follow up after event", "Next Step Date": D.addBiz(today(), 2), Notes: f.Comments, Email: f.Email, Phone: f.Phone, Owner: C.owner });
           toast("Lead saved"); render();
@@ -934,6 +958,22 @@
         $("#scan", el).onchange = (e) => scanCard(e.target.files[0], el);
       } };
   };
+  function leadEdit(l) {
+    sheet("Edit · " + (l.Name || "lead"), `
+      <div class="f2">${field("Name", "Name", l.Name)}${field("Organization", "Organization", l.Organization)}</div>
+      <div class="f2">${field("Phone", "Phone", l.Phone, "tel")}${field("Email", "Email", l.Email, "email")}</div>
+      <div class="f"><label>Response</label>${chips("resp", L("Response"), l.Response)}</div>
+      ${field("Notes / what they said", "Comments", l.Comments, "textarea")}
+      ${field("Conversation links (doc / Outlook thread — one per line)", "Links", l.Links, "textarea")}
+      <button class="btn pri block" id="save">Save</button>`, (el, close) => {
+      wireChips(el);
+      $("#save", el).onclick = () => {
+        const f = form(el);
+        API.update("leads", l, { Name: f.Name, Organization: f.Organization, Phone: f.Phone, Email: f.Email, Response: chipVal(el, "resp"), Comments: f.Comments, Links: f.Links });
+        close(); toast("Saved"); render();
+      };
+    });
+  }
   async function scanCard(file, el) {
     if (!file) return;
     const msg = $("#scanmsg", el); msg.textContent = "Reading card...";
@@ -1276,6 +1316,7 @@
         case "cdone": case "cslip": case "ccommit": e.stopPropagation(); { const c = bySig("commitments", sig); if (c) { API.update("commitments", c, { Status: act === "cdone" ? "Done" : act === "cslip" ? "Slipped" : "Committed" }); render(); } return; }
         case "inc": { API.inc(a.dataset.c, a.dataset.f, +a.dataset.d); render(); return; }
         case "lead2pipe": { const l = bySig("leads", sig); return l && lead2pipe(l); }
+        case "editlead": e.stopPropagation(); { const l = bySig("leads", sig); return l && leadEdit(l); }
         case "tdec": { const t = live("targets").find((x) => x.Account === a.dataset.n); if (t) { API.update("targets", t, { "Your Decision": a.dataset.v }); toast(t.Account + ": " + a.dataset.v); render(); } return; }
         case "ctouch": { const c = bySig("contacts", sig); return c && contactTouch(c); }
         case "libcopy": e.stopPropagation(); { const i = bySig("library", sig); if (i && i.Body) { copyText(i.Body); toast("Copied · " + (i.Title || "")); } return; }
