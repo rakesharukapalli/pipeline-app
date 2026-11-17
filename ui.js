@@ -30,20 +30,30 @@
   const live = (t) => rows(t).filter((r) => hasData(t, r));
   const deals = () => live("pipeline").filter((r) => r.Account);
   const dealById = (id) => deals().find((r) => r["Deal ID"] === id);
-  // Pull phone/email from Client Contacts or Leads when the pipeline row itself has none
+  // Pull phone/email from Client Contacts or Leads when the pipeline row itself has none.
+  // Matching is tolerant of spelling differences in company names ("ZF" vs "ZF Group")
+  // and personal titles ("Mr. Rao" vs "Rao"), since Search draws on the same contact rows.
+  const ACC_STOP = /\b(group|india|pvt|private|ltd|limited|technologies|technology|tech|solutions|services|systems|software|global|corp|corporation|inc|llp|llc|co|company|consulting|labs|digital|gcc|the)\b/g;
+  const normAcc = (s) => String(s || "").toLowerCase().replace(/&/g, " and ").replace(ACC_STOP, " ").replace(/[^a-z0-9]+/g, " ").trim();
+  const NAME_TITLE = /\b(mr|mrs|ms|miss|dr|prof|shri|smt|sri|sir)\b\.?/g;
+  const normName = (s) => String(s || "").toLowerCase().replace(NAME_TITLE, " ").replace(/[^a-z0-9]+/g, " ").trim();
   function contactInfoFor(r) {
     let phone = r.Phone || "", email = r.Email || "", src = "";
     if (phone && email) return { Phone: phone, Email: email, src: "" };
-    const nm = String(r.Contact || "").trim().toLowerCase();
-    if (nm) {
+    const nm = normName(r.Contact), acc = normAcc(r.Account);
+    if (nm || acc) {
       const words = nm.split(/\s+/).filter((w) => w.length >= 3);
-      const overlap = (a) => words.some((w) => a.indexOf(w) >= 0);
-      const pool = live("contacts").map((c) => ({ nm: String(c.SPOC || "").toLowerCase(), acc: c.Client, Phone: c.Phone, Email: c.Email, src: "Client Contacts" }))
-        .concat(live("leads").map((l) => ({ nm: String(l.Name || "").toLowerCase(), acc: l.Organization, Phone: l.Phone, Email: l.Email, src: "Leads" })));
-      const m = pool.find((c) => c.nm === nm)
-            || pool.find((c) => c.acc === r.Account && (c.nm.indexOf(nm) >= 0 || nm.indexOf(c.nm) >= 0) && (c.Phone || c.Email))
-            || pool.find((c) => c.acc === r.Account && overlap(c.nm) && (c.Phone || c.Email))
-            || pool.find((c) => (c.nm.indexOf(nm) >= 0 || (c.nm && nm.indexOf(c.nm) >= 0)) && (c.Phone || c.Email));
+      const accWords = acc.split(/\s+/).filter((w) => w.length >= 3);
+      const nameTok = (b) => b && (b === nm || words.some((w) => b.indexOf(w) >= 0) || (nm && nm.indexOf(b) >= 0));
+      const nameClose = (b) => b && nm && (b.indexOf(nm) >= 0 || nm.indexOf(b) >= 0);
+      const accHit = (b) => b && (b === acc || accWords.some((w) => b.indexOf(w) >= 0) || (acc && acc.indexOf(b) >= 0));
+      const pool = live("contacts").map((c) => ({ nm: normName(c.SPOC), acc: normAcc(c.Client), Phone: c.Phone, Email: c.Email, src: "Client Contacts" }))
+        .concat(live("leads").map((l) => ({ nm: normName(l.Name), acc: normAcc(l.Organization), Phone: l.Phone, Email: l.Email, src: "Leads" })))
+        .filter((c) => c.Phone || c.Email);
+      const m = pool.find((c) => nm && c.nm === nm)                        // exact name
+            || pool.find((c) => accHit(c.acc) && nameTok(c.nm))           // same company + name overlap
+            || pool.find((c) => nameClose(c.nm))                          // name containment, any company
+            || pool.find((c) => !nm && accHit(c.acc));                    // deal has no contact name: any at the company
       if (m) { if (!phone && m.Phone) { phone = m.Phone; src = m.src; } if (!email && m.Email) { email = m.Email; src = src || m.src; } }
     }
     return { Phone: phone, Email: email, src: src };
@@ -1105,10 +1115,43 @@
     };
   };
 
+  V.datacheck = () => {
+    const all = deals();
+    // Deals with no reachable phone AND no email, even after the Client Contacts / Leads fallback
+    const noContact = all.map((r) => ({ r, ci: contactInfoFor(r) }))
+      .filter((o) => !telLink(o.ci.Phone) && !o.ci.Email)
+      .sort((a, b) => deal(b.r).score - deal(a.r).score);
+    // Duplicate and blank Deal IDs
+    const counts = {};
+    all.forEach((r) => { const k = String(r["Deal ID"] || "").trim(); counts[k] = (counts[k] || 0) + 1; });
+    const dups = Object.keys(counts).filter((k) => k && counts[k] > 1).sort();
+    const blanks = all.filter((r) => !String(r["Deal ID"] || "").trim());
+    const dl = (r) => "#/deal/" + encodeURIComponent(r["Deal ID"] || "");
+    const row = (o) => `<div class="card deal"><div class="main"><div class="t1"><span>${esc(o.r.Account)}</span><span class="hint" style="font-weight:400"> · ${esc(o.r["Deal ID"] || "—")}</span></div>
+        <div class="t2">${esc(o.r.Contact || "(no contact name)")}${o.r.Designation ? " · " + esc(o.r.Designation) : ""} · ${esc(o.r.Stage || "")}</div>
+        <div class="acts" style="margin-top:6px"><a class="btn" href="${dl(o.r)}">Open</a><a class="btn" href="${liLink(o.r.Contact, o.r.Account)}" target="_blank" rel="noopener">LinkedIn</a><a class="btn" href="#/contacts">Contacts tab</a></div></div></div>`;
+    return { title: "Data check", back: true, html: `
+      <div class="card"><b>What this checks</b><div class="hint" style="margin-top:6px">The app reads one source only — your Google Sheet. The Pipeline and Search show the same data. Below are deals where no phone or email can be found (on the deal row <i>or</i> in Client Contacts / Leads), plus Deal IDs that are duplicated or blank.</div></div>
+
+      <div class="sec"><h2>Deals with no reachable contact</h2><span class="count">${noContact.length}</span></div>
+      ${noContact.length ? noContact.map(row).join("")
+        : '<div class="card"><div class="empty">Every deal resolves to a phone or email. 🎉</div></div>'}
+      ${noContact.length ? `<div class="card"><div class="hint">To fix one: add the Phone/Email on that person's row in the <b>Client Contacts</b> tab (match the Company and SPOC name to the deal), or fill the Phone/Email on the Pipeline row itself. The fallback matches even if the company is written slightly differently (e.g. "ZF" vs "ZF Group").</div></div>` : ""}
+
+      <div class="sec"><h2>Duplicate Deal IDs</h2><span class="count">${dups.length}</span></div>
+      ${dups.length ? `<div class="card"><div class="hint" style="margin-bottom:8px">The app opens the <b>first</b> row for a given Deal ID, so duplicates make <code>/deal/ID</code> ambiguous. Give each the correct unique ID in the Pipeline tab.</div>${dups.map((k) => `<div class="kv"><div><b>${esc(k)}</b></div><div>${counts[k]} rows</div></div>`).join("")}</div>`
+        : '<div class="card"><div class="empty">All Deal IDs are unique.</div></div>'}
+
+      ${blanks.length ? `<div class="sec"><h2>Deals with a blank Deal ID</h2><span class="count">${blanks.length}</span></div>
+        <div class="card"><div class="hint" style="margin-bottom:8px">These can't be opened by URL. Give each a Deal ID in the Pipeline tab.</div>${blanks.map((r) => `<div class="kv"><div>${esc(r.Account)}</div><div>${esc(r.Contact || "")}</div></div>`).join("")}</div>` : ""}
+
+      <div class="card"><div class="hint">Deal IDs are identifiers, not row numbers — ID D-037 can sit on any row, and the app's list is sorted by priority, not by row. That by itself is normal; only duplicate or blank IDs cause trouble.</div></div>` };
+  };
+
   V.more = () => {
     const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
-      ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
+      ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/datacheck", I.search, "Data check", "Missing contacts & duplicate IDs"], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
       <a class="tile" href="${esc(C.workbookUrl)}" target="_blank" rel="noopener">${I.xl}<b>Open the sheet</b><span>Excel for the web</span></a>
       <button class="tile" data-act="newdeal">${I.target}<b>New opportunity</b><span>Add to pipeline</span></button></div>` };
