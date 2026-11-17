@@ -11,6 +11,7 @@ window.APP_CONFIG = {
   sheetsToken: "caSCmeUz7RxuGkFHA0ncGA4S",
 
   owner: "Rakesh",
+  workbookUrl: "https://docs.google.com/spreadsheets/d/1b-4vrsjsxR_Sayx1yWJaNKuPEPgvTs1fKG1H1qMI7Yc/edit?gid=1522304945#gid=1522304945",
   timeZone: "India Standard Time",
   pollSeconds: 20,
   clientId: ""
