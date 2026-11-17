@@ -106,7 +106,7 @@
   }
   function ttPushCommit(c) {
     return ttCall("ticktick_push", {
-      ref: "commit:" + [c.Commitment, c["Due Date"]].join("|"),
+      ref: "commit:" + String(c.Commitment || "").trim().slice(0, 60),
       title: "Commitment: " + (c.Commitment || ""),
       content: [c.Account ? "Account: " + c.Account : "", c.Status ? "Status: " + c.Status : ""].filter(Boolean).join("\n"),
       dueISO: ttDue(c["Due Date"]), priority: 3,
@@ -128,6 +128,46 @@
     for (let i = 0; i < jobs.length; i++) { btn.innerHTML = `Pushing ${i + 1}/${jobs.length}…`; try { await jobs[i](); ok++; } catch (e) { fail++; } }
     btn.disabled = false; btn.innerHTML = "Push all follow-ups to TickTick";
     toast(`TickTick: ${ok} sent${fail ? ", " + fail + " failed" : ""}`, fail ? "warn" : "");
+  }
+  // Two-way: pull reschedules / renames / completions made in TickTick back into the sheet.
+  const ttStripAcc = (title, acc) => { const suf = acc ? " — " + acc : ""; return (suf && title.endsWith(suf)) ? title.slice(0, -suf.length) : title; };
+  async function ttPullAll(btn, silent) {
+    if (B.demo) { if (btn) toast("(demo) would sync from TickTick"); return; }
+    if (btn) { btn.disabled = true; btn.innerHTML = "Syncing…"; }
+    let changed = 0;
+    try {
+      const res = await ttCall("ticktick_pull");
+      (res.items || []).forEach((it) => {
+        if (it.gone) return;
+        const dueISO = String(it.due || "").slice(0, 10);
+        const dueSerial = /^\d{4}-\d{2}-\d{2}$/.test(dueISO) ? D.fromISO(dueISO) : "";
+        const done = Number(it.status) === 2;
+        if (it.ref.indexOf("pipe:") === 0) {
+          const r = deals().find((d) => "pipe:" + d["Deal ID"] === it.ref); if (!r) return;
+          const ch = {};
+          const nn = ttStripAcc(String(it.title || ""), r.Account).trim();
+          if (nn && nn !== r["Next Step"]) ch["Next Step"] = nn;
+          if (done) { ch["Next Step Date"] = ""; const note = "✓ Done in TickTick (" + D.fmt(today(), { abs: 1 }) + ")"; if (!String(r.Notes || "").startsWith(note)) ch.Notes = (note + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500); }
+          else if (dueSerial && dueSerial !== r["Next Step Date"]) ch["Next Step Date"] = dueSerial;
+          if (Object.keys(ch).length) { API.update("pipeline", r, ch); changed++; }
+        } else if (it.ref.indexOf("cand:") === 0) {
+          const c = live("delivery").find((x) => "cand:" + [x.Candidate, x.Role, x.Client].join("|") === it.ref); if (!c) return;
+          const ch = {};
+          if (done) { if (isNum(c["Next Follow-up"])) ch["Next Follow-up"] = ""; }
+          else if (dueSerial && dueSerial !== c["Next Follow-up"]) ch["Next Follow-up"] = dueSerial;
+          if (Object.keys(ch).length) { API.update("delivery", c, ch); changed++; }
+        } else if (it.ref.indexOf("commit:") === 0) {
+          const cm = live("commitments").find((x) => "commit:" + String(x.Commitment || "").trim().slice(0, 60) === it.ref); if (!cm) return;
+          const ch = {};
+          if (done) { if (cm.Status !== "Done") ch.Status = "Done"; }
+          else if (dueSerial && dueSerial !== cm["Due Date"]) ch["Due Date"] = dueSerial;
+          if (Object.keys(ch).length) { API.update("commitments", cm, ch); changed++; }
+        }
+      });
+      if (!silent) toast(changed ? `Synced ${changed} change(s) from TickTick` : "Already up to date with TickTick");
+      else if (changed) toast(`${changed} update(s) from TickTick`);
+    } catch (e) { if (!silent) toast(e.message || "Sync failed", "warn"); }
+    finally { if (btn) { btn.disabled = false; btn.innerHTML = "Sync from TickTick"; } }
   }
 
   const I = {
@@ -1201,18 +1241,13 @@
   }
   function fallbackCopy(txt) { const ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.focus(); ta.select(); try { document.execCommand("copy"); } catch (e) {} ta.remove(); }
   function libCardHtml(i) {
-    const body = i.Body || "", link = i.Link || "";
-    const snippet = body ? esc(body.length > 180 ? body.slice(0, 180) + "…" : body) : "";
-    return `<div class="card">
-      <div class="t1" style="font-weight:800;display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span>${esc(i.Title || "Untitled")}</span>${i.Category ? `<span class="chip stage">${esc(i.Category)}</span>` : ""}${i.Type ? `<span class="chip">${esc(i.Type)}</span>` : ""}</div>
-      ${i.Tags ? `<div class="t2" style="font-size:12px;color:var(--ink-3);margin-top:3px">${esc(i.Tags)}</div>` : ""}
-      ${snippet ? `<div class="t3" style="font-size:13px;margin-top:7px;white-space:pre-wrap;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden">${snippet}</div>` : ""}
-      <div class="acts" style="margin-top:9px">
-        ${body ? `<button class="pri" data-act="libcopy" data-sig='${esc(i._sig)}'>${I.copy}<span class="lbl">Copy</span></button><button data-act="libview" data-sig='${esc(i._sig)}'>View</button>` : ""}
-        ${link ? `<a class="btn" href="${esc(link)}" target="_blank" rel="noopener">${I.out}<span class="lbl">Open</span></a>` : ""}
-      </div>
-      ${i.Updated || i.Owner ? `<div class="hint" style="margin-top:6px">${i.Updated ? "Updated " + esc(D.fmt(i.Updated, { abs: 1 })) : ""}${i.Owner ? (i.Updated ? " · " : "") + esc(i.Owner) : ""}</div>` : ""}
-    </div>`;
+    const link = i.Link || "";
+    const meta = `<div class="libmeta">${i.Category ? `<span class="chip stage">${esc(i.Category)}</span>` : ""}${i.Type ? `<span class="chip">${esc(i.Type)}</span>` : ""}${i.Updated ? `<span class="hint">Updated ${esc(D.fmt(i.Updated, { abs: 1 }))}</span>` : ""}</div>`;
+    const inner = `<div class="libmain"><div class="libtitle">${esc(i.Title || "Untitled")}</div>${(i.Category || i.Type || i.Updated) ? meta : ""}</div><span class="libarrow">${link ? I.out : I.copy}</span>`;
+    // A document link → the whole row opens it. A text template → the row opens the viewer (with Copy).
+    return link
+      ? `<a class="librow" href="${esc(link)}" target="_blank" rel="noopener">${inner}</a>`
+      : `<button class="librow" data-act="libview" data-sig='${esc(i._sig)}'>${inner}</button>`;
   }
   function libFilter() {
     const q = libState.q.toLowerCase();
@@ -1229,7 +1264,7 @@
     const items = libItems();
     const cats = [...new Set(items.map((i) => (i.Category || "Other").trim()).filter(Boolean))].sort();
     const empty = !items.length;
-    const render_ = () => `<div class="cardgrid">${libFilter().map(libCardHtml).join("") || '<div class="empty">Nothing matches.</div>'}</div>`;
+    const render_ = () => `<div class="libstack">${libFilter().map(libCardHtml).join("") || '<div class="empty">Nothing matches.</div>'}</div>`;
     return {
       title: "Library", back: true, html: empty ? `<div class="card"><b>Your content library is empty.</b>
         <p class="hint">Add a <b>Library</b> tab to your sheet (header row 1) with columns: <b>Category, Title, Type, Body, Link, Tags, Owner, Updated</b>.</p>
@@ -1306,10 +1341,10 @@
           if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)'; return; }
           if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>`; return; }
           const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
-          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. Follow-ups you push become TickTick tasks with due dates.</p>
-            <button class="btn pri" id="ttall">Push all follow-ups to TickTick</button>
-            <a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener" style="margin-left:6px">Reconnect</a>`;
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. Follow-ups you push become TickTick tasks; reschedules, renames &amp; completions in TickTick sync back here.</p>
+            <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>`;
           $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
+          $("#ttpull", el).onclick = () => ttPullAll($("#ttpull", el));
         };
         if (B.demo) { paint({ configured: true, connected: true, expiresAt: Date.now() + 15552e6, authUrl: "#" }); return; }
         ttCall("ticktick_status").then(paint).catch((e) => { box.innerHTML = 'Could not reach the TickTick bridge: ' + esc(e.message) + '. Make sure ticktick.gs is added and redeployed.'; });
@@ -1863,6 +1898,8 @@
     render();
     Store.flush();
     setInterval(Store.poll, (C.pollSeconds || 20) * 1000);
+    // Once per app open: pull any reschedules / completions made in TickTick back into the sheet.
+    if (!B.demo) { try { if (!sessionStorage.getItem("pp.ttpull")) { sessionStorage.setItem("pp.ttpull", "1"); setTimeout(() => ttPullAll(null, true), 2500); } } catch (e) {} }
     if (S.status === "error" && !S.tables.pipeline) $("#view").innerHTML = `<div class="card"><b>Couldn't open the workbook.</b><p class="hint">${esc(S.error)}</p><p class="hint">Check the web app is deployed with access = Anyone and sheetsUrl/token match. See SETUP-google.md.</p><button class="btn pri" onclick="location.reload()">Retry</button></div>`;
   }
   window.UI = { toast, render };

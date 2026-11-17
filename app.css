@@ -288,3 +288,13 @@ table.mini td.n{text-align:right;font-variant-numeric:tabular-nums}
 .fchk{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600}
 .fchk input{width:17px;height:17px}
 @media(min-width:620px){.fgrid{grid-template-columns:repeat(3,1fr)}}
+
+/* library — one full-width button per row, the title is the button */
+.libstack{display:flex;flex-direction:column;gap:10px}
+.librow{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;padding:14px 16px;border:2px solid var(--b);border-radius:14px;background:var(--card);color:var(--ink);cursor:pointer;box-shadow:0 2px 0 var(--b);font:inherit}
+.librow:active{transform:translateY(1px);box-shadow:0 1px 0 var(--b)}
+.libmain{min-width:0;flex:1}
+.libtitle{font-weight:800;font-size:15.5px;line-height:1.3;overflow-wrap:anywhere}
+.libmeta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.libarrow{flex:none;color:var(--ink-3);display:flex}
+.libarrow svg{width:20px;height:20px}
