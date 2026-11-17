@@ -79,6 +79,57 @@
   }
   const nextDealId = () => { const n = deals().map((r) => +(String(r["Deal ID"] || "").match(/\d+/) || [0])[0]); return "D-" + String(Math.max(0, ...n) + 1).padStart(3, "0"); };
 
+  // ---------------- TickTick (one-way push: app -> TickTick, via the Apps Script bridge)
+  async function ttCall(action, payload) {
+    if (B.demo) { await new Promise((r) => setTimeout(r, 250)); return { ok: true, id: "demo", demo: true, connected: true, configured: true, authUrl: "#" }; }
+    if (!B.rpc) throw new Error("TickTick needs the Google Sheets backend");
+    return B.rpc(action, payload);
+  }
+  const ttDue = (serial) => (isNum(serial) ? D.toISO(serial) : "");
+  const ttPrio = (temp) => (/hot/i.test(temp) ? 5 : /warm/i.test(temp) ? 3 : 1);
+  function ttPushDeal(r) {
+    return ttCall("ticktick_push", {
+      ref: "pipe:" + (r["Deal ID"] || r.Account),
+      title: (r["Next Step"] || "Follow up") + " — " + (r.Account || ""),
+      content: [r.Contact ? "Contact: " + r.Contact : "", r.Stage ? "Stage: " + r.Stage : "", r["Deal ID"] ? "Deal " + r["Deal ID"] : ""].filter(Boolean).join("\n"),
+      dueISO: ttDue(r["Next Step Date"]), priority: ttPrio(r.Temperature),
+    });
+  }
+  function ttPushCand(c) {
+    const due = isNum(c["Next Follow-up"]) ? c["Next Follow-up"] : c["Interview Date"];
+    return ttCall("ticktick_push", {
+      ref: "cand:" + [c.Candidate, c.Role, c.Client].join("|"),
+      title: "Follow up: " + (c.Candidate || "candidate") + " — " + (c.Role || "") + (c.Client ? " @ " + c.Client : ""),
+      content: [c.Status ? "Status: " + c.Status : "", isNum(c["Interview Date"]) ? "Interview: " + D.fmt(c["Interview Date"], { abs: 1 }) + (c["Interview Time"] ? " " + c["Interview Time"] : "") : ""].filter(Boolean).join("\n"),
+      dueISO: ttDue(due), priority: 3,
+    });
+  }
+  function ttPushCommit(c) {
+    return ttCall("ticktick_push", {
+      ref: "commit:" + [c.Commitment, c["Due Date"]].join("|"),
+      title: "Commitment: " + (c.Commitment || ""),
+      content: [c.Account ? "Account: " + c.Account : "", c.Status ? "Status: " + c.Status : ""].filter(Boolean).join("\n"),
+      dueISO: ttDue(c["Due Date"]), priority: 3,
+    });
+  }
+  async function ttButton(btn, fn) {
+    const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Sending…";
+    try { const r = await fn(); toast(r && r.demo ? "(demo) would send to TickTick" : r && r.updated ? "Updated in TickTick" : "Added to TickTick"); btn.innerHTML = I.tt + "In TickTick"; }
+    catch (e) { toast(e.message || "TickTick push failed", "warn"); btn.disabled = false; btn.innerHTML = old; }
+  }
+  async function ttPushAll(btn) {
+    const t = today();
+    const dl = deals().filter((r) => deal(r).open && isNum(r["Next Step Date"]));
+    const cd = live("delivery").filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]));
+    const cm = live("commitments").filter((c) => ["Proposed", "Committed"].includes(c.Status) && isNum(c["Due Date"]));
+    const jobs = [...dl.map((r) => () => ttPushDeal(r)), ...cd.map((c) => () => ttPushCand(c)), ...cm.map((c) => () => ttPushCommit(c))];
+    if (!jobs.length) return toast("Nothing with a due date to push");
+    let ok = 0, fail = 0; btn.disabled = true;
+    for (let i = 0; i < jobs.length; i++) { btn.innerHTML = `Pushing ${i + 1}/${jobs.length}…`; try { await jobs[i](); ok++; } catch (e) { fail++; } }
+    btn.disabled = false; btn.innerHTML = "Push all follow-ups to TickTick";
+    toast(`TickTick: ${ok} sent${fail ? ", " + fail + " failed" : ""}`, fail ? "warn" : "");
+  }
+
   const I = {
     today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
     board: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="12" rx="1.5"/><rect x="17" y="3" width="4" height="8" rx="1.5"/></svg>',
@@ -102,6 +153,7 @@
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
     lib: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h7M9 11h5"/></svg>',
     copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+    tt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>',
   };
 
   // ------------------------------------------------------------------ toast / sheet
@@ -437,6 +489,7 @@
         <a class="${email ? "" : "dis"}" href="mailto:${esc(email)}" data-act="mail" data-id="${esc(r["Deal ID"])}">${I.mail}Email</a>
         <a href="${liLink(r.Contact, r.Account)}" target="_blank" rel="noopener">${I.li}LinkedIn</a>
         <button data-act="log" data-id="${esc(r["Deal ID"])}">${I.log}Log</button>
+        <button data-act="tt" data-id="${esc(r["Deal ID"])}">${I.tt}TickTick</button>
       </div>
       <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
         <div><div style="font-size:12px;color:var(--ink-3)">NEXT STEP</div><div style="font-weight:650;margin-top:2px">${esc(r["Next Step"] || "No next step set")}</div>
@@ -924,8 +977,10 @@
     const isNew = !c; c = c || { "Stand-up Date": today(), Status: "Committed", Owner: C.owner, "Due Date": today() + 14 };
     sheet(isNew ? "New commitment" : "Commitment", `${field("Commitment", "cm", c.Commitment, "textarea")}${field("Account", "acc", c.Account, "text", 'list="accts5"')}${datalist("accts5", deals().map((d) => d.Account))}
       <div class="f"><label>Due</label>${dateChips("due", c["Due Date"])}</div><div class="f"><label>Status</label>${chips("st", L("CommitStatus"), c.Status)}</div>
-      <button class="btn pri block" id="save">Save</button>`, (el, close) => {
+      <button class="btn pri block" id="save">Save</button>
+      ${isNew ? "" : `<button class="btn block" id="tt" style="margin-top:8px">${I.tt}Send to TickTick</button>`}`, (el, close) => {
       wireDateChips(el);
+      if ($("#tt", el)) $("#tt", el).onclick = () => ttButton($("#tt", el), () => ttPushCommit(c));
       $("#save", el).onclick = () => { const f = form(el); if (!f.cm) return toast("Write the commitment", "warn");
         const v = { "Stand-up Date": c["Stand-up Date"], Commitment: f.cm, Account: f.acc, Owner: c.Owner || C.owner, "Due Date": f.due, Status: chipVal(el, "st") };
         if (isNew) API.add("commitments", v); else API.update("commitments", c, v); close(); toast("Saved"); render(); };
@@ -1168,8 +1223,23 @@
       <div class="card"><b>Install on your phone</b><div class="hint" style="margin-top:6px">${isIOS ? "Safari: tap Share → Add to Home Screen." : "Chrome: menu ⋮ → Install app (or Add to Home screen)."}</div>${installEvt ? '<button class="btn pri" data-act="install" style="margin-top:8px">Install now</button>' : ""}</div>
       <div class="card"><b>Targets & thresholds</b><div class="hint">Edit them in the Settings tab of the workbook - the app picks them up automatically.</div>
         <div class="kv" style="margin-top:8px"><div>Margin threshold</div><div>${pct(setting("MarginMin", 0.25))}</div><div>Logos / quarter</div><div>${setting("LogoTarget", 2)}</div><div>Weekly emails / calls / LinkedIn</div><div>${setting("T_Email", 100)} / ${setting("T_Call", 50)} / ${setting("T_LinkedIn", 50)}</div><div>Meetings / week</div><div>${setting("T_Meetings", 4)}</div></div></div>
+      <div class="card"><b>TickTick</b><div id="ttbox" class="hint" style="margin-top:6px">Checking connection…</div></div>
       ${B.demo ? "" : '<button class="btn block danger" data-act="signout">Sign out</button>'}`,
-      mount: (el) => { $('.chips[data-name="theme"]', el).addEventListener("pick", (e) => { const v = e.detail; if (v) { localStorage.setItem("pp.theme", v); document.documentElement.setAttribute("data-theme", v); } else { localStorage.removeItem("pp.theme"); document.documentElement.removeAttribute("data-theme"); } }); } };
+      mount: (el) => {
+        $('.chips[data-name="theme"]', el).addEventListener("pick", (e) => { const v = e.detail; if (v) { localStorage.setItem("pp.theme", v); document.documentElement.setAttribute("data-theme", v); } else { localStorage.removeItem("pp.theme"); document.documentElement.removeAttribute("data-theme"); } });
+        const box = $("#ttbox", el);
+        const paint = (st) => {
+          if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)'; return; }
+          if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>`; return; }
+          const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. Follow-ups you push become TickTick tasks with due dates.</p>
+            <button class="btn pri" id="ttall">Push all follow-ups to TickTick</button>
+            <a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener" style="margin-left:6px">Reconnect</a>`;
+          $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
+        };
+        if (B.demo) { paint({ configured: true, connected: true, expiresAt: Date.now() + 15552e6, authUrl: "#" }); return; }
+        ttCall("ticktick_status").then(paint).catch((e) => { box.innerHTML = 'Could not reach the TickTick bridge: ' + esc(e.message) + '. Make sure ticktick.gs is added and redeployed.'; });
+      } };
   };
 
   // ------------------------------------------------------------------ actions (event delegation)
@@ -1182,6 +1252,7 @@
       const r = id ? dealById(id) : null;
       switch (act) {
         case "log": e.preventDefault(); e.stopPropagation(); return r && logTouch(r);
+        case "tt": e.preventDefault(); e.stopPropagation(); return r && ttButton(a, () => ttPushDeal(r));
         case "call": e.stopPropagation(); if (r) { if (a.tagName !== "A") { const l = telLink(r.Phone); if (l) location.href = l; } pendingCallLog = { id: r["Deal ID"], ch: "Call", at: Date.now() }; } return;
         case "wa": e.stopPropagation(); if (r) pendingCallLog = { id: r["Deal ID"], ch: "WhatsApp", at: Date.now() }; return;
         case "mail": e.stopPropagation(); if (r) pendingCallLog = { id: r["Deal ID"], ch: "Email", at: Date.now() }; return;
@@ -1548,9 +1619,11 @@
       ${field("Note (feedback / next step)", "notes", "", "textarea")}
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
       <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal" checked></div>
-      <button class="btn pri block" id="save">Save</button>`, (el, close) => {
+      <button class="btn pri block" id="save">Save</button>
+      <button class="btn block" id="tt" style="margin-top:8px">${I.tt}Send to TickTick</button>`, (el, close) => {
       wireDateChips(el);
       $('.chips[data-name="stg"]', el).addEventListener("pick", (e) => { if (e.detail) $('[name="status"]', el).value = e.detail; });
+      $("#tt", el).onclick = () => ttButton($("#tt", el), () => ttPushCand(c));
       $("#save", el).onclick = () => {
         const f = form(el), t = today();
         const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
