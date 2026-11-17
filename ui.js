@@ -169,6 +169,25 @@
     } catch (e) { if (!silent) toast(e.message || "Sync failed", "warn"); }
     finally { if (btn) { btn.disabled = false; btn.innerHTML = "Sync from TickTick"; } }
   }
+  // Auto two-way: connection is checked once at boot; then changes push automatically and
+  // TickTick changes pull automatically (on open + when the app returns to the foreground).
+  let ttState = { connected: false, configured: false, checked: false };
+  let ttLastPull = 0;
+  async function ttRefreshState() {
+    if (B.demo) { ttState = { connected: false, demo: true, checked: true }; return ttState; }
+    try { const s = await ttCall("ticktick_status"); ttState = Object.assign({ checked: true }, s); }
+    catch (e) { ttState = { checked: true, connected: false, error: e.message }; }
+    return ttState;
+  }
+  function ttAutoPull(force) {
+    if (B.demo || !ttState.connected) return;
+    const now = Date.now(); if (!force && now - ttLastPull < 45000) return;
+    ttLastPull = now; ttPullAll(null, true);
+  }
+  // Fire-and-forget push when the user changes a follow-up in the app.
+  function ttAutoDeal(r) { if (!B.demo && ttState.connected && isNum(r["Next Step Date"])) ttPushDeal(r).catch(() => {}); }
+  function ttAutoCand(c) { if (!B.demo && ttState.connected && isNum(c["Next Follow-up"])) ttPushCand(c).catch(() => {}); }
+  function ttAutoCommit(c) { if (!B.demo && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttPushCommit(c).catch(() => {}); }
 
   const I = {
     today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -672,7 +691,7 @@
         if (f.stage === "Qualified" && r["Qualified?"] !== "Y") { changes["Qualified?"] = "Y"; if (!isNum(r["Qualified Date"])) changes["Qualified Date"] = t; }
         if (oc === "Not interested" || (f.stage !== r.Stage && f.stage !== "Contact Established")) { /* keep blocker */ }
         API.add("activity", { Date: t, "Deal ID": r["Deal ID"], Account: r.Account, Contact: r.Contact, Channel: ch, Outcome: oc, Notes: f.notes, "Next Step": f.next, "Next Step Date": nd || "", "Logged By": C.owner || "" });
-        API.update("pipeline", r, changes);
+        API.update("pipeline", r, changes); ttAutoDeal(r);
         const oc_ch = CH_MAP[ch];
         if (oc_ch) {
           API.inc(oc_ch, "Activities", 1);
@@ -696,7 +715,7 @@
     const opts = [["Tomorrow", D.addBiz(t, 1)], ["In 3 days", D.addBiz(t, 3)], ["Next Monday", D.nextMonday(t)], ["In 1 week", t + 7], ["In 2 weeks", t + 14], ["In 1 month", t + 30]];
     sheet(`Reschedule · ${r.Account}`, `<div class="list">${opts.map(([l, v]) => `<div class="li" data-d="${v}"><div class="main"><b>${l}</b></div><span class="chip">${D.fmt(v, { abs: 1 })}</span></div>`).join("")}</div>
       ${field("Or pick a date", "d", "", "date")}<button class="btn pri block" id="ok">Set date</button>`, (el, close) => {
-      const set = (v) => { API.update("pipeline", r, { "Next Step Date": v }); close(); toast("Next step → " + D.fmt(v, { abs: 1 })); render(); };
+      const set = (v) => { API.update("pipeline", r, { "Next Step Date": v }); ttAutoDeal(r); close(); toast("Next step → " + D.fmt(v, { abs: 1 })); render(); };
       $(".list", el).onclick = (e) => { const li = e.target.closest(".li"); if (li) set(+li.dataset.d); };
       $("#ok", el).onclick = () => { const v = form(el).d; if (isNum(v)) set(v); };
     });
@@ -736,8 +755,8 @@
           "Service Line": f["Service Line"], Stage: f.Stage, Temperature: chipVal(el, "Temperature"), "Qualified?": f["Qualified?"], Blocker: f.Blocker,
           "Est. Headcount": f["Est. Headcount"], "Est. Monthly Billing (INR)": f.billL === "" ? "" : Math.round(f.billL * 1e5), "Next Step": f["Next Step"], "Next Step Date": f["Next Step Date"], Notes: f.Notes, Links: f.Links };
         if (v["Qualified?"] === "Y" && !isNum(r["Qualified Date"])) v["Qualified Date"] = today();
-        if (isNew) { v["Deal ID"] = nextDealId(); v.Owner = C.owner; v["Last Contact"] = preset["Last Contact"] || ""; API.add("pipeline", v); close(); toast("Added " + v.Account); location.hash = "#/deal/" + encodeURIComponent(v["Deal ID"]); }
-        else { API.update("pipeline", r, v); close(); toast("Saved"); render(); }
+        if (isNew) { v["Deal ID"] = nextDealId(); v.Owner = C.owner; v["Last Contact"] = preset["Last Contact"] || ""; API.add("pipeline", v); ttAutoDeal(v); close(); toast("Added " + v.Account); location.hash = "#/deal/" + encodeURIComponent(v["Deal ID"]); }
+        else { API.update("pipeline", r, v); ttAutoDeal(r); close(); toast("Saved"); render(); }
       };
     });
   }
@@ -1097,7 +1116,7 @@
       if ($("#tt", el)) $("#tt", el).onclick = () => ttButton($("#tt", el), () => ttPushCommit(c));
       $("#save", el).onclick = () => { const f = form(el); if (!f.cm) return toast("Write the commitment", "warn");
         const v = { "Stand-up Date": c["Stand-up Date"], Commitment: f.cm, Account: f.acc, Owner: c.Owner || C.owner, "Due Date": f.due, Status: chipVal(el, "st") };
-        if (isNew) API.add("commitments", v); else API.update("commitments", c, v); close(); toast("Saved"); render(); };
+        if (isNew) API.add("commitments", v); else API.update("commitments", c, v); ttAutoCommit(v); close(); toast("Saved"); render(); };
     });
   }
 
@@ -1737,7 +1756,7 @@
       $("#save", el).onclick = () => {
         const f = form(el), t = today();
         const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
-        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", "Interview Time": f.ivt || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
+        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", "Interview Time": f.ivt || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes }); ttAutoCand(c);
         if (f.cal && isNum(f.iv)) API.event(reminderEvent(`Interview: ${c.Candidate} - ${c.Role || ""} (${c.Client || ""})`, f.iv, f.ivt || "11:00", `Candidate: ${esc(c.Candidate)}\nRole: ${esc(c.Role || "")}\nClient: ${esc(c.Client || "")}\nStatus: ${esc(f.status)}`, 60));
         close(); toast("Updated · " + c.Candidate); render();
       };
@@ -1898,8 +1917,12 @@
     render();
     Store.flush();
     setInterval(Store.poll, (C.pollSeconds || 20) * 1000);
-    // Once per app open: pull any reschedules / completions made in TickTick back into the sheet.
-    if (!B.demo) { try { if (!sessionStorage.getItem("pp.ttpull")) { sessionStorage.setItem("pp.ttpull", "1"); setTimeout(() => ttPullAll(null, true), 2500); } } catch (e) {} }
+    // TickTick two-way: check connection once, then pull immediately on open and whenever
+    // the app returns to the foreground (throttled). Pushes happen automatically on edits.
+    if (!B.demo) {
+      ttRefreshState().then((s) => { if (s.connected) ttAutoPull(true); });
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) ttAutoPull(); });
+    }
     if (S.status === "error" && !S.tables.pipeline) $("#view").innerHTML = `<div class="card"><b>Couldn't open the workbook.</b><p class="hint">${esc(S.error)}</p><p class="hint">Check the web app is deployed with access = Anyone and sheetsUrl/token match. See SETUP-google.md.</p><button class="btn pri" onclick="location.reload()">Retry</button></div>`;
   }
   window.UI = { toast, render };
