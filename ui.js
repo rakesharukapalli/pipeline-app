@@ -594,8 +594,8 @@
         <div class="f"><label>With decision maker?</label>${chips("mdm", ["Y", "N"], "Y")}</div></div>
       ${field("Notes", "notes", "", "textarea", 'placeholder="What happened? Need, timeline, budget, who decides..."')}
       <div class="f"><label>Next step</label>
-        <select name="nextsel" id="nextsel"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}<option value="__other" ${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? "selected" : ""}>Other (type your own)…</option></select>
-        <input name="next" id="nextinput" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? "" : "hidden"}" style="margin-top:6px"></div>
+        <select name="nextsel" id="nextsel"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? `<option selected>${esc(r["Next Step"])}</option>` : ""}<option value="__other">Other (type your own)…</option></select>
+        <input name="next" id="nextinput" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="hidden" style="margin-top:6px"></div>
       <div class="f"><label>Next step date</label>${dateChips("ndate", "")}</div>
       <div class="f"><label>Temperature</label>${chips("temp", L("Temp"), r.Temperature)}</div>
       ${select("Stage", "stage", L("Stage"), r.Stage, false)}
@@ -680,8 +680,8 @@
       <div class="f2">${select("Qualified?", "Qualified?", ["Y", "N"], r["Qualified?"])}${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}</div>
       <div class="f2">${field("Est. headcount", "Est. Headcount", r["Est. Headcount"], "number", 'inputmode="numeric"')}${field("Est. billing (₹ lakhs / month)", "billL", isNum(r["Est. Monthly Billing (INR)"]) ? r["Est. Monthly Billing (INR)"] / 1e5 : "", "number", 'step="0.1" inputmode="decimal"')}</div>
       <div class="f"><label>Next step</label>
-        <select id="nextsel2"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}<option value="__other" ${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? "selected" : ""}>Other (type your own)…</option></select>
-        <input name="Next Step" id="nextinput2" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? "" : "hidden"}" style="margin-top:6px"></div>
+        <select id="nextsel2"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? `<option selected>${esc(r["Next Step"])}</option>` : ""}<option value="__other">Other (type your own)…</option></select>
+        <input name="Next Step" id="nextinput2" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="hidden" style="margin-top:6px"></div>
       <div class="f"><label>Next step date</label>${dateChips("Next Step Date", r["Next Step Date"])}</div>
       ${field("Notes", "Notes", r.Notes, "textarea")}
       ${field("Conversation links (doc / Outlook thread — one per line)", "Links", r.Links, "textarea")}
