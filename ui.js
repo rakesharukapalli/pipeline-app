@@ -167,20 +167,21 @@
   // TickTick changes pull automatically (on open + when the app returns to the foreground).
   let ttState = { connected: false, configured: false, checked: false };
   let ttLastPull = 0;
+  const ttPaused = () => { try { return localStorage.getItem("pp.ttpause") === "1"; } catch (e) { return false; } };
   async function ttRefreshState() {
-    if (B.demo) { ttState = { connected: false, demo: true, checked: true }; return ttState; }
+    if (B.demo || ttPaused()) { ttState = { connected: false, demo: B.demo, paused: ttPaused(), checked: true }; return ttState; }
     try { const s = await ttCall("ticktick_status"); ttState = Object.assign({ checked: true }, s); }
     catch (e) { ttState = { checked: true, connected: false, error: e.message }; }
     return ttState;
   }
   function ttAutoPull(force) {
-    if (B.demo || !ttState.connected) return;
+    if (B.demo || ttPaused() || !ttState.connected) return;
     const now = Date.now(); if (!force && now - ttLastPull < 45000) return;
     ttLastPull = now; ttPullAll(null, true);
   }
   // Fire-and-forget push when the user changes a follow-up in the app.
-  function ttAutoDeal(r) { if (!B.demo && ttState.connected && isNum(r["Next Step Date"])) ttPushDeal(r).catch(() => {}); }
-  function ttAutoCommit(c) { if (!B.demo && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttPushCommit(c).catch(() => {}); }
+  function ttAutoDeal(r) { if (!B.demo && !ttPaused() && ttState.connected && isNum(r["Next Step Date"])) ttPushDeal(r).catch(() => {}); }
+  function ttAutoCommit(c) { if (!B.demo && !ttPaused() && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttPushCommit(c).catch(() => {}); }
 
   const I = {
     today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -1341,7 +1342,7 @@
       <div class="card"><div class="kv"><div>Signed in</div><div>${esc(B.userName())}</div><div>Status</div><div>${esc(st)}${S.error ? `<div class="hint" style="color:var(--bad)">${esc(S.error)}</div>` : ""}</div>
       <div>Waiting to sync</div><div>${S.queue.length} change(s)</div><div>Last loaded</div><div>${S.loadedAt ? new Date(S.loadedAt).toLocaleString("en-GB") : "-"}</div>
       <div>Last edited by</div><div>${esc(S.lastWriteBy || "-")}</div></div>
-      <div class="acts"><button class="pri" data-act="syncnow">Sync now</button>${S.queue.length ? '<button class="danger" data-act="dropq">Discard queued changes</button>' : ""}</div></div>
+      <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="pri" data-act="syncnow">Sync now</button><button data-act="testconn">Test sheet connection</button>${S.queue.length ? '<button class="danger" data-act="dropq">Discard queued changes</button>' : ""}</div></div>
       <div class="card"><b>Theme</b><div style="margin-top:8px">${chips("theme", [["", "Auto"], ["light", "Light"], ["dark", "Dark"]], localStorage.getItem("pp.theme") || "")}</div></div>
       <div class="card"><b>Install on your phone</b><div class="hint" style="margin-top:6px">${isIOS ? "Safari: tap Share → Add to Home Screen." : "Chrome: menu ⋮ → Install app (or Add to Home screen)."}</div>${installEvt ? '<button class="btn pri" data-act="install" style="margin-top:8px">Install now</button>' : ""}</div>
       <div class="card"><b>Targets & thresholds</b><div class="hint">Edit them in the Settings tab of the workbook - the app picks them up automatically.</div>
@@ -1351,17 +1352,22 @@
       mount: (el) => {
         $('.chips[data-name="theme"]', el).addEventListener("pick", (e) => { const v = e.detail; if (v) { localStorage.setItem("pp.theme", v); document.documentElement.setAttribute("data-theme", v); } else { localStorage.removeItem("pp.theme"); document.documentElement.removeAttribute("data-theme"); } });
         const box = $("#ttbox", el);
+        const pauseRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpause" ${ttPaused() ? "checked" : ""}> Pause all TickTick sync (use this if the sheet sync is slow)</label>`;
+        const wirePause = () => { const p = $("#ttpause", el); if (p) p.onchange = () => { try { localStorage.setItem("pp.ttpause", p.checked ? "1" : "0"); } catch (e) {} toast(p.checked ? "TickTick paused" : "TickTick resumed"); }; };
+        if (ttPaused()) { box.innerHTML = '<p>⏸ <b>TickTick is paused.</b> Only your Google Sheet sync is running. Uncheck below to resume.</p>' + pauseRow(); wirePause(); return; }
         const paint = (st) => {
-          if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)'; return; }
-          if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>`; return; }
+          box.dataset.done = "1";
+          if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)' + pauseRow(); wirePause(); return; }
+          if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>` + pauseRow(); wirePause(); return; }
           const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
-          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. <b>Sales / pipeline & commitment</b> follow-ups sync with TickTick (reschedules, renames & completions flow back). Delivery is kept separate — it never goes to TickTick.</p>
-            <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>`;
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. <b>Sales / pipeline & commitment</b> follow-ups sync with TickTick. Delivery is kept separate — it never goes to TickTick.</p>
+            <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>${pauseRow()}`;
           $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
           $("#ttpull", el).onclick = () => ttPullAll($("#ttpull", el));
+          wirePause();
         };
         if (B.demo) { paint({ configured: true, connected: true, expiresAt: Date.now() + 15552e6, authUrl: "#" }); return; }
-        ttCall("ticktick_status").then(paint).catch((e) => { box.innerHTML = 'Could not reach the TickTick bridge: ' + esc(e.message) + '. Make sure ticktick.gs is added and redeployed.'; });
+        ttCall("ticktick_status").then(paint).catch((e) => { box.innerHTML = 'Could not reach the TickTick bridge: ' + esc(e.message) + '. Make sure ticktick.gs is added and redeployed.' + pauseRow(); wirePause(); });
       } };
   };
 
@@ -1412,6 +1418,7 @@
         case "newreq": return dReqForm(null);
         case "editreq": return dReqForm(dreqs().find((r) => r["Req ID"] === a.dataset.id));
         case "syncnow": Store.flush().then(() => Store.refresh()); return toast("Syncing...");
+        case "testconn": (async () => { toast("Testing the sheet connection…"); const t0 = Date.now(); try { const m = B.meta ? await B.meta() : await B.rpc("meta"); toast("✅ Sheet reachable in " + Math.round((Date.now() - t0) / 1000) + "s (version " + ((m && m.eTag) || "?") + ")"); } catch (e) { toast("❌ Connection failed: " + (e.message || e), "warn"); } })(); return;
         case "dropq": if (confirm("Discard changes that haven't reached the sheet?")) { S.queue.length = 0; localStorage.setItem("pp.queue.v1", "[]"); Store.refresh(); } return;
         case "install": installEvt && installEvt.prompt(); return;
         case "signout": return B.signOut();
