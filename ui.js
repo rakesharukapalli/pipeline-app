@@ -1866,8 +1866,14 @@
     }).filter((o) => o.Candidate);
     return { rows, headers };
   }
-  function clientOptions() { return [...new Set([...live("delivery").map((c) => c.Client), ...dreqs().map((r) => r.Client), ...live("accounts").map((a) => a.Account)].filter(Boolean))].sort(); }
-  function spocOptions() { return [...new Set([...live("delivery").map((c) => c.SPOC), ...dreqs().map((r) => r.SPOC), ...live("contacts").map((c) => c.SPOC)].filter(Boolean))].sort(); }
+  // de-duplicate ignoring case + surrounding spaces (keeps first-seen spelling)
+  const uniqCI = (arr) => { const seen = new Set(); const out = []; arr.forEach((v) => { const s = String(v == null ? "" : v).trim(); if (!s) return; const k = s.toLowerCase(); if (seen.has(k)) return; seen.add(k); out.push(s); }); return out.sort((a, b) => a.localeCompare(b)); };
+  function clientOptions() { return uniqCI([...live("delivery").map((c) => c.Client), ...dreqs().map((r) => r.Client), ...live("accounts").map((a) => a.Account), ...live("contacts").map((c) => c.Client)]); }
+  function spocOptions() {
+    const candNames = new Set(live("delivery").map((c) => String(c.Candidate || "").trim().toLowerCase()));
+    // SPOCs come from Client Contacts, Requirements and the Delivery SPOC column — never candidate names
+    return uniqCI([...live("contacts").map((c) => c.SPOC), ...dreqs().map((r) => r.SPOC), ...live("delivery").map((c) => c.SPOC)]).filter((s) => !candNames.has(s.toLowerCase()));
+  }
   function dImport() {
     sheet("Import candidates", `
       <div class="hint" style="margin-bottom:8px">Paste the profile table from your Outlook email (or the Excel/Word you built it in). The <b>first row must be the column headings</b>. Every recognised column (phone, email, company, locations, CTC, notice…) is filled; set the Client & SPOC below.</div>
