@@ -1861,9 +1861,9 @@
   const uniqCI = (arr) => { const seen = new Set(); const out = []; arr.forEach((v) => { const s = String(v == null ? "" : v).trim(); if (!s) return; const k = s.toLowerCase(); if (seen.has(k)) return; seen.add(k); out.push(s); }); return out.sort((a, b) => a.localeCompare(b)); };
   function clientOptions() { return uniqCI([...live("delivery").map((c) => c.Client), ...dreqs().map((r) => r.Client), ...live("accounts").map((a) => a.Account), ...live("contacts").map((c) => c.Client)]); }
   function spocOptions() {
+    // SPOCs come ONLY from the Delivery sheet's SPOC column — never candidate names
     const candNames = new Set(live("delivery").map((c) => String(c.Candidate || "").trim().toLowerCase()));
-    // SPOCs come from Client Contacts, Requirements and the Delivery SPOC column — never candidate names
-    return uniqCI([...live("contacts").map((c) => c.SPOC), ...dreqs().map((r) => r.SPOC), ...live("delivery").map((c) => c.SPOC)]).filter((s) => !candNames.has(s.toLowerCase()));
+    return uniqCI(live("delivery").map((c) => c.SPOC)).filter((s) => !candNames.has(s.toLowerCase()));
   }
   function dImport() {
     sheet("Import candidates", `
@@ -1891,14 +1891,16 @@
         add.style.display = "block"; add.textContent = `Add ${parsed.rows.length} candidate(s)`;
       };
       $("#prev", el).onclick = doPrev;
-      $("#imp", el).addEventListener("input", () => { if ($("#impprev", el).innerHTML) doPrev(); });
+      $("#imp", el).addEventListener("input", doPrev);   // live preview as you paste/type
       $("#impadd", el).onclick = () => {
+        if (!parsed.rows.length) return toast("Nothing to import yet — paste a table and check the preview", "warn");
         const f = form(el);
         const rid = f.dreq ? String(f.dreq).split(" · ")[0] : "";
         const rr = rid ? dreqs().find((x) => x["Req ID"] === rid) : null;
         const headers = (S.tables.delivery && S.tables.delivery.headers) || [];
         const has = (h) => headers.indexOf(h) >= 0;
         let n = 0;
+        try {
         parsed.rows.forEach((r) => {
           const obj = {
             Candidate: r.Candidate, "Req ID": rid,
@@ -1916,7 +1918,11 @@
           obj.Notes = noteBits.join(" · ");
           API.add("delivery", obj); n++;
         });
-        close(); toast(`Imported ${n} candidate(s)`); render();
+        } catch (e) { return toast("Import error: " + (e.message || e), "warn"); }
+        setDelivView("work");                 // jump to the Work list so the new candidates are visible
+        close(); toast(`Imported ${n} candidate(s) — saving…`);
+        render();
+        Store.flush().then(() => Store.refresh(true)).then(() => { if (S.status === "error") toast("Added in the app, but saving to the sheet failed: " + (S.error || "sync error"), "warn"); else toast(`${n} candidate(s) saved to the sheet`); }).catch((e) => toast("Sheet save issue: " + (e.message || e), "warn"));
       };
     });
   }

@@ -131,8 +131,9 @@
       row[op.field] = (+row[op.field] || 0) + op.delta; row._pending = true;
     }
   }
+  const DELIVERY_HEADERS = ["Candidate", "Req ID", "Client", "SPOC", "Phone", "Email", "Company", "Role", "Experience (yrs)", "Relevant Exp", "Current Location", "Preferred Location", "Notice Period", "Interview Availability", "Current CTC (LPA)", "Expected CTC (LPA)", "Submitted", "Status", "Last Follow-up", "Next Follow-up", "Interview Date", "Interview Time", "Notes"];
   function ensureLocalTable(t) {
-    const headers = t === "activity" ? ACTIVITY_HEADERS : [];
+    const headers = t === "activity" ? ACTIVITY_HEADERS.slice() : (t === "delivery" ? DELIVERY_HEADERS.slice() : []);
     S.tables[t] = { headers, rows: [], sheet: TABLES[t].sheet, startRow: 1 };
     return S.tables[t];
   }
