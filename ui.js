@@ -120,9 +120,9 @@
   async function ttPushAll(btn) {
     const t = today();
     const dl = deals().filter((r) => deal(r).open && isNum(r["Next Step Date"]));
-    const cd = live("delivery").filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]));
     const cm = live("commitments").filter((c) => ["Proposed", "Committed"].includes(c.Status) && isNum(c["Due Date"]));
-    const jobs = [...dl.map((r) => () => ttPushDeal(r)), ...cd.map((c) => () => ttPushCand(c)), ...cm.map((c) => () => ttPushCommit(c))];
+    // Delivery candidates are intentionally NOT pushed — Delivery stays app↔sheet only.
+    const jobs = [...dl.map((r) => () => ttPushDeal(r)), ...cm.map((c) => () => ttPushCommit(c))];
     if (!jobs.length) return toast("Nothing with a due date to push");
     let ok = 0, fail = 0; btn.disabled = true;
     for (let i = 0; i < jobs.length; i++) { btn.innerHTML = `Pushing ${i + 1}/${jobs.length}…`; try { await jobs[i](); ok++; } catch (e) { fail++; } }
@@ -150,12 +150,6 @@
           if (done) { ch["Next Step Date"] = ""; const note = "✓ Done in TickTick (" + D.fmt(today(), { abs: 1 }) + ")"; if (!String(r.Notes || "").startsWith(note)) ch.Notes = (note + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500); }
           else if (dueSerial && dueSerial !== r["Next Step Date"]) ch["Next Step Date"] = dueSerial;
           if (Object.keys(ch).length) { API.update("pipeline", r, ch); changed++; }
-        } else if (it.ref.indexOf("cand:") === 0) {
-          const c = live("delivery").find((x) => "cand:" + [x.Candidate, x.Role, x.Client].join("|") === it.ref); if (!c) return;
-          const ch = {};
-          if (done) { if (isNum(c["Next Follow-up"])) ch["Next Follow-up"] = ""; }
-          else if (dueSerial && dueSerial !== c["Next Follow-up"]) ch["Next Follow-up"] = dueSerial;
-          if (Object.keys(ch).length) { API.update("delivery", c, ch); changed++; }
         } else if (it.ref.indexOf("commit:") === 0) {
           const cm = live("commitments").find((x) => "commit:" + String(x.Commitment || "").trim().slice(0, 60) === it.ref); if (!cm) return;
           const ch = {};
@@ -186,7 +180,6 @@
   }
   // Fire-and-forget push when the user changes a follow-up in the app.
   function ttAutoDeal(r) { if (!B.demo && ttState.connected && isNum(r["Next Step Date"])) ttPushDeal(r).catch(() => {}); }
-  function ttAutoCand(c) { if (!B.demo && ttState.connected && isNum(c["Next Follow-up"])) ttPushCand(c).catch(() => {}); }
   function ttAutoCommit(c) { if (!B.demo && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttPushCommit(c).catch(() => {}); }
 
   const I = {
@@ -1362,7 +1355,7 @@
           if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)'; return; }
           if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>`; return; }
           const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
-          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. Follow-ups you push become TickTick tasks; reschedules, renames &amp; completions in TickTick sync back here.</p>
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. <b>Sales / pipeline & commitment</b> follow-ups sync with TickTick (reschedules, renames & completions flow back). Delivery is kept separate — it never goes to TickTick.</p>
             <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>`;
           $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
           $("#ttpull", el).onclick = () => ttPullAll($("#ttpull", el));
@@ -1752,15 +1745,13 @@
       ${field("Note (feedback / next step)", "notes", "", "textarea")}
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
       <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal" checked></div>
-      <button class="btn pri block" id="save">Save</button>
-      <button class="btn block" id="tt" style="margin-top:8px">${I.tt}Send to TickTick</button>`, (el, close) => {
+      <button class="btn pri block" id="save">Save</button>`, (el, close) => {
       wireDateChips(el);
       $('.chips[data-name="stg"]', el).addEventListener("pick", (e) => { if (e.detail) $('[name="status"]', el).value = e.detail; });
-      $("#tt", el).onclick = () => ttButton($("#tt", el), () => ttPushCand(c));
       $("#save", el).onclick = () => {
         const f = form(el), t = today();
         const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
-        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", "Interview Time": f.ivt || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes }); ttAutoCand(c);
+        API.update("delivery", c, { Status: f.status, "Last Follow-up": t, "Next Follow-up": f.nf || "", "Interview Date": f.iv || "", "Interview Time": f.ivt || "", Notes: line ? (line + (c.Notes ? " | " + c.Notes : "")).slice(0, 1500) : c.Notes });
         if (f.cal && isNum(f.iv)) API.event(reminderEvent(`Interview: ${c.Candidate} - ${c.Role || ""} (${c.Client || ""})`, f.iv, f.ivt || "11:00", `Candidate: ${esc(c.Candidate)}\nRole: ${esc(c.Role || "")}\nClient: ${esc(c.Client || "")}\nStatus: ${esc(f.status)}`, 60));
         close(); toast("Updated · " + c.Candidate); render();
       };
