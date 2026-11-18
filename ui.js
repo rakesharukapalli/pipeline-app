@@ -1775,11 +1775,15 @@
       ${field("Candidate *", "Candidate", c.Candidate)}
       ${req ? `<div class="f"><label>Requirement</label><input value="${esc(curReqLabel)}" readonly></div>`
         : `<div class="f"><label>Requirement</label><div style="display:flex;gap:6px"><select name="reqpick" style="flex:1;min-width:0"><option value="">— none / fill manually —</option>${reqList.map((o) => `<option ${o.indexOf(c["Req ID"] + " ") === 0 ? "selected" : ""}>${esc(o)}</option>`).join("")}</select><button type="button" class="btn" id="newreqbtn" style="white-space:nowrap">+ New</button></div></div>`}
-      <div class="f2">${field("Client", "Client", c.Client)}${field("Role", "Role", c.Role)}</div>
-      <div class="f2">${field("SPOC", "SPOC", c.SPOC)}${field("Submitted", "Submitted", c.Submitted, "date")}</div>
+      <div class="f2"><div class="f"><label>Client</label><input name="Client" value="${esc(c.Client)}" list="ccli" autocomplete="off">${datalist("ccli", clientOptions())}</div>${field("Role", "Role", c.Role)}</div>
+      <div class="f2"><div class="f"><label>SPOC</label><input name="SPOC" value="${esc(c.SPOC)}" list="cspo" autocomplete="off">${datalist("cspo", spocOptions())}</div>${field("Submitted", "Submitted", c.Submitted, "date")}</div>
+      <div class="f2">${field("Contact number", "Phone", c.Phone, "tel")}${field("Email", "Email", c.Email, "email")}</div>
+      <div class="f2">${field("Current company", "Company", c.Company)}${field("Notice period", "Notice Period", c["Notice Period"])}</div>
       ${select("Status", "status", DSTATUS, c.Status, false)}
-      <div class="f2">${field("Experience (yrs)", "Experience (yrs)", c["Experience (yrs)"], "number", 'step="0.1" inputmode="decimal"')}${field("Notice period", "Notice Period", c["Notice Period"])}</div>
+      <div class="f2">${field("Total exp (yrs)", "Experience (yrs)", c["Experience (yrs)"], "number", 'step="0.1" inputmode="decimal"')}${field("Relevant exp", "Relevant Exp", c["Relevant Exp"])}</div>
       <div class="f2">${field("Current CTC (LPA)", "Current CTC (LPA)", c["Current CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}${field("Expected CTC (LPA)", "Expected CTC (LPA)", c["Expected CTC (LPA)"], "number", 'step="0.1" inputmode="decimal"')}</div>
+      <div class="f2">${field("Current location", "Current Location", c["Current Location"])}${field("Preferred location", "Preferred Location", c["Preferred Location"])}</div>
+      ${field("Interview availability", "Interview Availability", c["Interview Availability"])}
       <div class="f2">${field("Interview date", "Interview Date", c["Interview Date"], "date")}${field("Interview time", "Interview Time", c["Interview Time"] || "", "time")}</div>
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
       ${field("Notes", "Notes", c.Notes, "textarea")}
@@ -1794,8 +1798,8 @@
         const f = form(el);
         if (!f.Candidate) return toast("Candidate name is required", "warn");
         const rid = req ? req["Req ID"] : (pick && pick.value ? pick.value.split(" · ")[0] : c["Req ID"] || "");
-        const v = { Candidate: f.Candidate, "Req ID": rid, Client: f.Client, Role: f.Role, SPOC: f.SPOC, Submitted: f.Submitted, Status: f.status,
-          "Next Follow-up": f.nf || "", "Interview Date": f["Interview Date"] || "", "Interview Time": f["Interview Time"] || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
+        const v = { Candidate: f.Candidate, "Req ID": rid, Client: f.Client, Role: f.Role, SPOC: f.SPOC, Phone: f.Phone, Email: f.Email, Company: f.Company, Submitted: f.Submitted, Status: f.status,
+          "Next Follow-up": f.nf || "", "Interview Date": f["Interview Date"] || "", "Interview Time": f["Interview Time"] || "", "Experience (yrs)": f["Experience (yrs)"], "Relevant Exp": f["Relevant Exp"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], "Current Location": f["Current Location"], "Preferred Location": f["Preferred Location"], "Interview Availability": f["Interview Availability"], Notes: f.Notes };
         if (isNew) API.add("delivery", v); else API.update("delivery", c, v);
         close(); toast("Saved"); render();
       };
@@ -1823,7 +1827,9 @@
     [/^(remarks|comments|notes|feedback)/, "Notes"],
   ];
   const candFieldFor = (h) => { const n = String(h).toLowerCase().replace(/[^a-z0-9]/g, ""); for (const [re, f] of CAND_MAP) if (re.test(n)) return f; return null; };
-  const NOTE_LABEL = { Company: "Company", "Relevant Exp": "Rel exp", "Current Location": "Location", "Preferred Location": "Pref loc", "Interview Availability": "Avail" };
+  const NOTE_LABEL = { Phone: "📞", Email: "✉", Company: "Company", "Relevant Exp": "Rel exp", "Current Location": "Location", "Preferred Location": "Pref loc", "Interview Availability": "Avail" };
+  // candidate fields beyond the always-present core — mapped to their own sheet column if it exists, else folded into Notes
+  const CAND_EXTRA = ["Phone", "Email", "Company", "Relevant Exp", "Current Location", "Preferred Location", "Interview Availability"];
   function parseCandTable(text) {
     const lines = String(text || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) return { rows: [] };
@@ -1847,29 +1853,30 @@
     }
     const map = headers.map(candFieldFor);
     const rows = dataRows.map((cells) => {
-      const o = {}; const extra = []; let phone = "", email = "";
+      const o = {}; const extra = [];
       headers.forEach((h, i) => {
         const f = map[i]; const val = (cells[i] == null ? "" : cells[i]).trim(); if (!val || f === "_ignore") return;
         if (f === "Experience (yrs)" || f === "Current CTC (LPA)" || f === "Expected CTC (LPA)") o[f] = num(val);
-        else if (f === "Phone") { phone = val; o.Phone = val; }
-        else if (f === "Email") { email = val; o.Email = val; }
-        else if (f === "Candidate" || f === "Role" || f === "Client" || f === "SPOC" || f === "Status" || f === "Notice Period") o[f] = val;
         else if (f === "Notes") extra.push(val);
-        else if (f) extra.push((NOTE_LABEL[f] || f) + ": " + val);
-        else extra.push(h + ": " + val);
+        else if (f) o[f] = val;                 // every recognised field → its own key (Phone, Email, Company, locations, etc.)
+        else extra.push(h + ": " + val);        // unrecognised column → Notes
       });
-      const contact = [phone ? "📞 " + phone : "", email ? "✉ " + email : ""].filter(Boolean).join(" · ");
-      o.Notes = [contact, extra.join(" · ")].filter(Boolean).join(" · ");
+      if (extra.length) o.Notes = [o.Notes, extra.join(" · ")].filter(Boolean).join(" · ");
       return o;
     }).filter((o) => o.Candidate);
     return { rows, headers };
   }
+  function clientOptions() { return [...new Set([...live("delivery").map((c) => c.Client), ...dreqs().map((r) => r.Client), ...live("accounts").map((a) => a.Account)].filter(Boolean))].sort(); }
+  function spocOptions() { return [...new Set([...live("delivery").map((c) => c.SPOC), ...dreqs().map((r) => r.SPOC), ...live("contacts").map((c) => c.SPOC)].filter(Boolean))].sort(); }
   function dImport() {
     sheet("Import candidates", `
-      <div class="hint" style="margin-bottom:8px">Paste the profile table from your Outlook email (or the Excel/Word you built it in). The <b>first row must be the column headings</b> (Name, Role, Experience, Current CTC, Expected CTC, Notice…).</div>
-      <textarea id="imp" rows="7" placeholder="Name	Role	Experience	Current CTC	Expected CTC	Notice Period" style="width:100%;font-family:monospace;font-size:12px"></textarea>
-      <div class="f2" style="margin-top:8px">${field("Apply Client (optional)", "dclient", "")}${field("Apply Role (optional)", "drole", "")}</div>
-      <div class="f"><label>Attach all to a requirement (optional)</label><select name="dreq"><option value="">— none —</option>${reqOpts().map((o) => `<option>${esc(o)}</option>`).join("")}</select></div>
+      <div class="hint" style="margin-bottom:8px">Paste the profile table from your Outlook email (or the Excel/Word you built it in). The <b>first row must be the column headings</b>. Every recognised column (phone, email, company, locations, CTC, notice…) is filled; set the Client & SPOC below.</div>
+      <textarea id="imp" rows="6" placeholder="Name	Role	Experience	Current CTC	Expected CTC	Notice Period" style="width:100%;font-family:monospace;font-size:12px"></textarea>
+      <div class="f2" style="margin-top:8px">
+        <div class="f"><label>Client (pick or type new)</label><input name="dclient" list="impclients" autocomplete="off">${datalist("impclients", clientOptions())}</div>
+        <div class="f"><label>SPOC (pick or type new)</label><input name="dspoc" list="impspocs" autocomplete="off">${datalist("impspocs", spocOptions())}</div>
+      </div>
+      <div class="f2">${field("Apply Role (optional override)", "drole", "")}<div class="f"><label>Attach to requirement (optional)</label><select name="dreq"><option value="">— none —</option>${reqOpts().map((o) => `<option>${esc(o)}</option>`).join("")}</select></div></div>
       <button class="btn block" id="prev">Preview</button>
       <div id="impprev" style="margin-top:10px"></div>
       <button class="btn pri block" id="impadd" style="margin-top:10px;display:none">Add candidates</button>`, (el, close) => {
@@ -1878,7 +1885,7 @@
         parsed = parseCandTable($("#imp", el).value);
         const box = $("#impprev", el), add = $("#impadd", el);
         if (!parsed.rows.length) { box.innerHTML = '<div class="empty">Couldn\'t read candidate rows. Check the first row is headings and there\'s a Name/Candidate column.</div>'; add.style.display = "none"; return; }
-        const cols = [["Candidate", "Candidate"], ["Role", "Role"], ["Phone", "Phone"], ["Experience (yrs)", "Exp"], ["Current CTC (LPA)", "CCTC"], ["Expected CTC (LPA)", "ECTC"], ["Notice Period", "Notice"]];
+        const cols = [["Candidate", "Candidate"], ["Role", "Role"], ["Phone", "Phone"], ["Email", "Email"], ["Experience (yrs)", "Exp"], ["Current CTC (LPA)", "CCTC"], ["Expected CTC (LPA)", "ECTC"], ["Notice Period", "Notice"]];
         box.innerHTML = `<div class="hint" style="margin-bottom:6px">Found <b>${parsed.rows.length}</b> candidate(s):</div>
           <div style="overflow:auto;border:2px solid var(--b);border-radius:10px"><table style="border-collapse:collapse;font-size:12px;width:100%">
           <tr>${cols.map(([, h]) => `<th style="text-align:left;padding:5px 7px;border-bottom:2px solid var(--b)">${h}</th>`).join("")}</tr>
@@ -1892,19 +1899,25 @@
         const f = form(el);
         const rid = f.dreq ? String(f.dreq).split(" · ")[0] : "";
         const rr = rid ? dreqs().find((x) => x["Req ID"] === rid) : null;
+        const headers = (S.tables.delivery && S.tables.delivery.headers) || [];
+        const has = (h) => headers.indexOf(h) >= 0;
         let n = 0;
         parsed.rows.forEach((r) => {
-          API.add("delivery", {
+          const obj = {
             Candidate: r.Candidate, "Req ID": rid,
-            Client: r.Client || (rr && rr.Client) || f.dclient || "",
-            Role: r.Role || (rr && rr.Role) || f.drole || "",
-            SPOC: (rr && rr.SPOC) || "",
+            Client: f.dclient || r.Client || (rr && rr.Client) || "",
+            Role: r.Role || f.drole || (rr && rr.Role) || "",
+            SPOC: f.dspoc || r.SPOC || (rr && rr.SPOC) || "",
             Submitted: today(), Status: (r.Status && DSTATUS.includes(r.Status)) ? r.Status : "TA Shared",
-            "Next Follow-up": D.addBiz(today(), 2), Phone: r.Phone || "", Email: r.Email || "",
-            "Experience (yrs)": r["Experience (yrs)"] == null ? "" : r["Experience (yrs)"], "Notice Period": r["Notice Period"] || "",
+            "Next Follow-up": D.addBiz(today(), 2), "Notice Period": r["Notice Period"] || "",
+            "Experience (yrs)": r["Experience (yrs)"] == null ? "" : r["Experience (yrs)"],
             "Current CTC (LPA)": r["Current CTC (LPA)"] == null ? "" : r["Current CTC (LPA)"], "Expected CTC (LPA)": r["Expected CTC (LPA)"] == null ? "" : r["Expected CTC (LPA)"],
-            Notes: r.Notes || "",
-          }); n++;
+          };
+          // Extra fields → their own column if the sheet has it, else keep in Notes (no data lost)
+          const noteBits = r.Notes ? [r.Notes] : [];
+          CAND_EXTRA.forEach((k) => { const v = r[k]; if (v === "" || v == null) return; if (has(k)) obj[k] = v; else noteBits.push((NOTE_LABEL[k] || k) + " " + v); });
+          obj.Notes = noteBits.join(" · ");
+          API.add("delivery", obj); n++;
         });
         close(); toast(`Imported ${n} candidate(s)`); render();
       };
