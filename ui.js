@@ -4,7 +4,46 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; const r = o[k](...a); return r; } });
+  const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
+
+  // ---------------- daily activity log (for stand-up: everything you did in the app that day)
+  let suppressAct = false;
+  const actStore = () => { try { return JSON.parse(localStorage.getItem("pp.actlog") || "{}"); } catch (e) { return {}; } };
+  const actSave = (o) => { try { localStorage.setItem("pp.actlog", JSON.stringify(o)); } catch (e) {} };
+  function logAct(text) {
+    if (!text) return;
+    try {
+      const now = Date.now(), dk = new Date().toLocaleDateString("en-CA"); // local yyyy-mm-dd
+      const o = actStore(); (o[dk] = o[dk] || []).push({ t: now, x: text });
+      const keys = Object.keys(o).sort(); while (keys.length > 14) delete o[keys.shift()];
+      if (o[dk].length > 500) o[dk] = o[dk].slice(-500);
+      actSave(o);
+    } catch (e) {}
+  }
+  const ADD_DESC = {
+    activity: (v) => `${v.Channel || "Touch"} · ${v.Outcome || ""} — ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}${v["Next Step"] ? " · next: " + v["Next Step"] : ""}`,
+    pipeline: (v) => `New deal · ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}`,
+    delivery: (v) => `New candidate · ${v.Candidate || ""}${v.Role ? " — " + v.Role : ""}${v.Client ? " @ " + v.Client : ""}`,
+    leads: (v) => `New lead · ${v.Name || ""}${v.Organization ? " (" + v.Organization + ")" : ""}`,
+    commitments: (v) => `Commitment · ${v.Commitment || ""}`,
+    meetings: (v) => `Meeting booked · ${v.Account || ""}`,
+    deliveryReqs: (v) => `New requirement · ${v.Role || ""}${v.Client ? " @ " + v.Client : ""}`,
+    requirements: (v) => `New requirement · ${v["Role / Skill"] || v.Role || ""}`,
+    proposals: (v) => `Proposal · ${v.Account || ""}`,
+    contacts: (v) => `New contact · ${v.SPOC || ""}${v.Client ? " @ " + v.Client : ""}`,
+  };
+  const UPD_DESC = {
+    pipeline: (row, ch) => { const b = []; if (ch.Stage) b.push("stage → " + ch.Stage); if (ch.Temperature) b.push(ch.Temperature); if (!ch.Stage && !ch.Temperature && ch["Next Step Date"] !== undefined) b.push("rescheduled"); return b.length ? `${row.Account || "Deal"} · ${b.join(", ")}` : ""; },
+    delivery: (row, ch) => (ch.Status !== undefined || ch["Next Follow-up"] !== undefined) ? `${row.Candidate || "Candidate"} · ${ch.Status || "follow-up updated"}` : "",
+    commitments: (row, ch) => ch.Status ? `Commitment · ${row.Commitment || ""} → ${ch.Status}` : "",
+    meetings: (row, ch) => ch.Status ? `Meeting · ${row.Account || ""} → ${ch.Status}` : "",
+    leads: (row, ch) => `Lead updated · ${row.Name || ""}`,
+  };
+  function recordAct(k, a) {
+    if (suppressAct) return;
+    if (k === "add") { const f = ADD_DESC[a[0]]; if (f) logAct(f(a[1] || {})); }
+    else if (k === "update") { const f = UPD_DESC[a[0]]; if (f) logAct(f(a[1] || {}, a[2] || {})); }
+  }
 
   // Dashboard scope: "all" (consolidated) | "core" (existing pipeline) | "gcc" (new GCC hunt)
   let dashScope = (() => { try { return localStorage.getItem("pp.dash") || "all"; } catch (e) { return "all"; } })();
@@ -1327,8 +1366,31 @@
       <div class="card"><div class="hint">Deal IDs are identifiers, not row numbers — ID D-037 can sit on any row, and the app's list is sorted by priority, not by row. That by itself is normal; only duplicate or blank IDs cause trouble.</div></div>` };
   };
 
+  let dayLogOff = 0;
+  V.daylog = () => {
+    const log = actStore();
+    const keyFor = (off) => { const d = new Date(); d.setDate(d.getDate() + off); return d.toLocaleDateString("en-CA"); };
+    const labelFor = (off) => off === 0 ? "Today" : off === -1 ? "Yesterday" : new Date(Date.now() + off * 864e5).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+    const key = keyFor(dayLogOff);
+    const entries = (log[key] || []).slice().sort((a, b) => a.t - b.t);
+    const fmtT = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const body = entries.length
+      ? `<div class="card" style="padding:0;overflow:hidden">${entries.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`
+      : '<div class="card"><div class="empty">Nothing logged for this day yet. Follow-ups, stage moves, new candidates, meetings, imports — everything you do in the app shows up here for your stand-up.</div></div>';
+    return {
+      title: "My day", back: true, html: `
+      <div class="seg" id="dayseg" style="margin-bottom:8px"><button data-o="0" class="${dayLogOff === 0 ? "on" : ""}">Today</button><button data-o="-1" class="${dayLogOff === -1 ? "on" : ""}">Yesterday</button></div>
+      <div class="sec"><h2>${esc(labelFor(dayLogOff))} · ${entries.length} action(s)</h2></div>
+      ${body}
+      ${entries.length ? `<button class="btn pri block" id="copyday" style="margin-top:10px">${I.copy} Copy for stand-up</button>` : ""}`,
+      mount: (el) => {
+        $("#dayseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { dayLogOff = +b.dataset.o; render(); } };
+        const cp = $("#copyday", el); if (cp) cp.onclick = () => { copyText(`Stand-up · ${labelFor(dayLogOff)}\n` + entries.map((e) => `• ${fmtT(e.t)} — ${e.x}`).join("\n")); toast("Copied — paste into your stand-up"); };
+      },
+    };
+  };
   V.more = () => {
-    const tiles = [["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/daylog", I.today, "My day · stand-up", "Everything you did today"], ["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/datacheck", I.search, "Data check", "Missing contacts & duplicate IDs"], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
@@ -1908,13 +1970,14 @@
         const has = (h) => headers.indexOf(h) >= 0;
         let n = 0;
         try {
+        suppressAct = true;
         parsed.rows.forEach((r) => {
           const obj = {
             Candidate: r.Candidate, "Req ID": rid,
             Client: f.dclient || r.Client || (rr && rr.Client) || "",
             Role: r.Role || f.drole || (rr && rr.Role) || "",
             SPOC: f.dspoc || r.SPOC || (rr && rr.SPOC) || "",
-            Submitted: today(), Status: (r.Status && DSTATUS.includes(r.Status)) ? r.Status : "TA Shared",
+            Submitted: today(), Status: (r.Status && DSTATUS.includes(r.Status)) ? r.Status : "",
             "Next Follow-up": D.addBiz(today(), 2), "Notice Period": r["Notice Period"] || "",
             "Experience (yrs)": r["Experience (yrs)"] == null ? "" : r["Experience (yrs)"],
             "Current CTC (LPA)": r["Current CTC (LPA)"] == null ? "" : r["Current CTC (LPA)"], "Expected CTC (LPA)": r["Expected CTC (LPA)"] == null ? "" : r["Expected CTC (LPA)"],
@@ -1925,7 +1988,8 @@
           obj.Notes = noteBits.join(" · ");
           API.add("delivery", obj); n++;
         });
-        } catch (e) { return toast("Import error: " + (e.message || e), "warn"); }
+        } catch (e) { suppressAct = false; return toast("Import error: " + (e.message || e), "warn"); }
+        suppressAct = false; logAct(`Imported ${n} candidate(s)`);
         setDelivView("work");                 // jump to the Work list so the new candidates are visible
         close(); toast(`Imported ${n} candidate(s) — saving…`);
         render();
