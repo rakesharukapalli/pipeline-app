@@ -33,7 +33,10 @@
           redirect: "follow",
         });
       } catch (e) { throw new Error("OFFLINE"); }
-      if ((res.status === 429 || res.status >= 500) && attempt < 4) { await sleep(1500 * (attempt + 1)); return this.rpc(action, payload, attempt + 1); }
+      // Only auto-retry safe, read-only actions. Retrying a write (addRow/patch/event) can
+      // re-run a request that already succeeded server-side → duplicate rows.
+      const WRITE_ACTIONS = { addRow: 1, patch: 1, event: 1, createTable: 1 };
+      if (!WRITE_ACTIONS[action] && (res.status === 429 || res.status >= 500) && attempt < 4) { await sleep(1500 * (attempt + 1)); return this.rpc(action, payload, attempt + 1); }
       const txt = await res.text();
       let j;
       try { j = JSON.parse(txt); }

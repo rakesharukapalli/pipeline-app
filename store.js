@@ -232,6 +232,16 @@
         op = { values: { "Week Start (Mon)": op.week, Channel: op.channel, Activities: 0, Responses: 0, "Meetings Booked": 0, [op.field]: Math.max(0, op.delta) } };
       }
       const inputs = T.headers.filter((h) => !isCalc(h));
+      // Idempotency guard: if an earlier attempt already wrote this exact row (same provided
+      // fields) — e.g. the server succeeded but the response was lost and we're retrying —
+      // adopt that row instead of writing a duplicate.
+      if (op.kind === "add") {
+        const prov = Object.keys(op.values).filter((h) => !isCalc(h) && op.values[h] !== "" && op.values[h] != null);
+        if (prov.length >= 2) {
+          const dupe = T.rows.find((x) => x._r && prov.every((h) => String(x[h] == null ? "" : x[h]) === String(op.values[h])));
+          if (dupe) { Object.assign(dupe, op.values); return; }
+        }
+      }
       const blank = T.rows.find((x) => x._r && inputs.every((h) => x[h] === "" || x[h] == null));
       const addr = await B.writeRow(T.sheet, TABLES[t].table, blank ? `A${blank._r}:${XL.colLetter(T.headers.length - 1)}${blank._r}` : null, T.headers, op.values, TABLES[t].dates);
       const r = +addr.match(/\d+/)[0];
