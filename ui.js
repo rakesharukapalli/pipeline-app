@@ -340,7 +340,9 @@
   }
   function section(title, items, cls = "", emptyMsg) {
     if (!items.length && !emptyMsg) return "";
-    return `<div class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${items.length}</span></div>${items.length ? `<div class="cardgrid">${items.join("")}</div>` : `<div class="empty">${esc(emptyMsg)}</div>`}`;
+    const body = items.length ? `<div class="cardgrid">${items.join("")}</div>` : `<div class="empty">${esc(emptyMsg)}</div>`;
+    const k = "pp.sec." + title; let open = true; try { open = localStorage.getItem(k) !== "0"; } catch (e) {}
+    return `<details class="secwrap" data-seck="${esc(k)}" ${open ? "open" : ""}><summary class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${items.length}</span><span class="secchev">▾</span></summary>${body}</details>`;
   }
   function meetCard(m) {
     const past = isNum(m.Date) && m.Date < today();
@@ -477,8 +479,8 @@
         <div class="seg" id="pseg"><button data-v="" class="${segOn("")}">All</button><button data-v="core" class="${segOn("core")}">Pipeline</button><button data-v="gcc" class="${segOn("gcc")}">GCC</button></div>
         ${["gcc", "gf", "bf"].includes(pstate.seg) ? `<div class="seg" id="pgcc"><button data-v="gcc" class="${pstate.seg === "gcc" ? "on" : ""}">All GCC</button><button data-v="gf" class="${pstate.seg === "gf" ? "on" : ""}">Greenfield</button><button data-v="bf" class="${pstate.seg === "bf" ? "on" : ""}">Brownfield</button></div>` : ""}
       </div>
-      <details class="filters" id="pfilters" ${nf ? "open" : ""}>
-        <summary>Filters${nf ? ` · ${nf}` : ""}</summary>
+      <details class="filters" id="pfilters">
+        <summary>Filters${nf ? ` · ${nf} active` : ""}</summary>
         <div class="fgrid">
           ${sel("fstage", pstate.stage, L("Stage"), "All stages")}
           ${sel("fcity", pstate.city, uniq("City"), "All cities")}
@@ -1413,6 +1415,7 @@
         case "dcand": { const c = bySig("delivery", sig); return c && dCandForm(c); }
         case "dlog": e.stopPropagation(); { const c = bySig("delivery", sig); return c && dLog(c); }
         case "newcand": return dCandForm(null, a.dataset.req ? dreqs().find((r) => r["Req ID"] === a.dataset.req) : null);
+        case "impcand": return dImport();
         case "newreq": return dReqForm(null);
         case "editreq": return dReqForm(dreqs().find((r) => r["Req ID"] === a.dataset.id));
         case "syncnow": Store.flush().then(() => Store.refresh()); return toast("Syncing...");
@@ -1436,6 +1439,7 @@
     sheet("Quick add", `<div class="list">
       <div class="li" data-q="log">${I.log}<div class="main"><b>Log a touch</b><div class="hint">Call, email, LinkedIn, WhatsApp</div></div></div>
       <div class="li" data-q="dcand">${I.people}<div class="main"><b>Delivery: add candidate</b><div class="hint">Pick or add a requirement inside</div></div></div>
+      <div class="li" data-q="dimp">${I.copy}<div class="main"><b>Delivery: import profiles</b><div class="hint">Paste a candidate table from Outlook</div></div></div>
       <div class="li" data-q="deal">${I.target}<div class="main"><b>New opportunity</b></div></div>
       <div class="li" data-q="meet">${I.cal}<div class="main"><b>Book a meeting</b></div></div>
       <div class="li" data-q="lead">${I.lead}<div class="main"><b>Event lead / scan card</b></div></div>
@@ -1443,7 +1447,7 @@
       <div class="li" data-q="req">${I.req}<div class="main"><b>Requirement</b></div></div>
       <div class="li" data-q="commit">${I.flag}<div class="main"><b>Commitment</b></div></div>
       <div class="li" data-q="dreq">${I.req}<div class="main"><b>Delivery: add requirement</b></div></div></div>`, (el, close) => {
-      $(".list", el).onclick = (e) => { const li = e.target.closest(".li"); if (!li) return; close(); setTimeout(() => ({ log: pickDeal, deal: () => dealForm(null), meet: () => meetingForm(null), lead: () => (location.hash = "#/leads"), prop: () => propForm(null), req: () => reqForm(null), commit: () => commitForm(null), dcand: () => dCandForm(null), dreq: () => dReqForm(null) })[li.dataset.q](), 260); };
+      $(".list", el).onclick = (e) => { const li = e.target.closest(".li"); if (!li) return; close(); setTimeout(() => ({ log: pickDeal, deal: () => dealForm(null), meet: () => meetingForm(null), lead: () => (location.hash = "#/leads"), prop: () => propForm(null), req: () => reqForm(null), commit: () => commitForm(null), dcand: () => dCandForm(null), dimp: () => dImport(), dreq: () => dReqForm(null) })[li.dataset.q](), 260); };
     });
   }
   function pickDeal() {
@@ -1696,7 +1700,7 @@
         <button class="kpi" data-scroll="d-due"><div class="v">${active.length}</div><div class="l">Active cand.</div></button>
         <button class="kpi ${due.length ? "warn" : ""}" data-scroll="d-due"><div class="v">${due.length}</div><div class="l">Follow-ups due</div></button>
         <button class="kpi" data-scroll="d-int"><div class="v">${joined.length}</div><div class="l">Joined</div></button></div>
-      <div class="acts" style="margin-bottom:6px"><button class="pri" data-act="newcand">Add candidate</button><button data-act="newreq">Add requirement</button></div>
+      <div class="acts" style="margin-bottom:6px"><button class="pri" data-act="newcand">Add candidate</button><button data-act="impcand">Import profiles</button><button data-act="newreq">Add requirement</button></div>
       <div class="sec"><h2>Funnel</h2></div>
       <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of submitted</th></tr>
         ${convRow("Submitted", sub, sub)}${convRow("Reached L1", rL1, sub)}${convRow("Reached L2", rL2, sub)}${convRow("Offered", rOf, sub)}${convRow("Joined", rJn, sub)}</table>
@@ -1794,6 +1798,115 @@
           "Next Follow-up": f.nf || "", "Interview Date": f["Interview Date"] || "", "Interview Time": f["Interview Time"] || "", "Experience (yrs)": f["Experience (yrs)"], "Notice Period": f["Notice Period"], "Current CTC (LPA)": f["Current CTC (LPA)"], "Expected CTC (LPA)": f["Expected CTC (LPA)"], Notes: f.Notes };
         if (isNew) API.add("delivery", v); else API.update("delivery", c, v);
         close(); toast("Saved"); render();
+      };
+    });
+  }
+  // ---- Import candidates from a pasted profile table (Outlook / Excel / Word) ----
+  const CAND_MAP = [
+    [/^(slno|sno|srno|serialno|srnumber)$/, "_ignore"],
+    [/^(candidate|name|candidatename|resource|consultant|profile|fullname)/, "Candidate"],
+    [/^(skill|role|position|designation|reqrole|skillset)/, "Role"],
+    [/^(client|customer|account|endclient)/, "Client"],
+    [/^(spoc|poc|contactperson)/, "SPOC"],
+    [/^(contactnumber|contactno|mobilenumber|mobileno|phoneno|phone|mobile|contact)/, "Phone"],
+    [/^(emailid|email|mailid|mail)/, "Email"],
+    [/^(currentcompany|presentcompany|company|organisation|organization|employer)/, "Company"],
+    [/^(relevantexp|relevantexperience|relexp)/, "Relevant Exp"],
+    [/^(expectedctc|expctc|ectc|expected)/, "Expected CTC (LPA)"],
+    [/^(currentctc|presentctc|cctc|ctc)/, "Current CTC (LPA)"],
+    [/^(totalexp|totalexperience|experience|exp|yrsofexp|yearsofexp|years|yrs)/, "Experience (yrs)"],
+    [/^(interviewavailability|interviewavail|availabilityforinterview|availslot)/, "Interview Availability"],
+    [/^(noticeperiod|notice|np|joining|joiningtime)/, "Notice Period"],
+    [/^(status|stage)/, "Status"],
+    [/^(preferredlocation|preflocation|preferredloc)/, "Preferred Location"],
+    [/^(currentlocation|location|baselocation|city)/, "Current Location"],
+    [/^(remarks|comments|notes|feedback)/, "Notes"],
+  ];
+  const candFieldFor = (h) => { const n = String(h).toLowerCase().replace(/[^a-z0-9]/g, ""); for (const [re, f] of CAND_MAP) if (re.test(n)) return f; return null; };
+  const NOTE_LABEL = { Company: "Company", "Relevant Exp": "Rel exp", "Current Location": "Location", "Preferred Location": "Pref loc", "Interview Availability": "Avail" };
+  function parseCandTable(text) {
+    const lines = String(text || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) return { rows: [] };
+    const num = (v) => { const m = String(v).match(/[\d.]+/); return m ? +m[0] : ""; };
+    // Tabular (one candidate per line) vs vertical (one value per line)
+    const delim = lines[0].indexOf("\t") >= 0 ? "\t" : (lines[0].indexOf("|") >= 0 ? "|" : (/\s{2,}/.test(lines[0]) ? "SP" : (lines[0].indexOf(",") >= 0 ? "," : null)));
+    const splitRow = (l) => (delim === "SP" ? l.split(/\s{2,}/) : (delim ? l.split(delim) : [l])).map((c) => c.trim());
+    let headers, dataRows;
+    if (delim && splitRow(lines[0]).length >= 3) {
+      headers = splitRow(lines[0]);
+      dataRows = lines.slice(1).map(splitRow);
+    } else {
+      // vertical: header block, then repeating blocks of the same length
+      let H = lines.findIndex((l, i) => i > 0 && /^\d{1,4}$/.test(l));   // first SL-No value marks data start
+      if (H < 1) { let i = 0; while (i < lines.length && lines[i].length <= 28 && (candFieldFor(lines[i]) || /^(slno|sno)/.test(lines[i].toLowerCase().replace(/[^a-z0-9]/g, "")))) i++; H = i; }
+      if (H < 2) return { rows: [], failed: true };
+      headers = lines.slice(0, H);
+      const vals = lines.slice(H);
+      dataRows = [];
+      for (let i = 0; i + H <= vals.length; i += H) dataRows.push(vals.slice(i, i + H));
+    }
+    const map = headers.map(candFieldFor);
+    const rows = dataRows.map((cells) => {
+      const o = {}; const extra = []; let phone = "", email = "";
+      headers.forEach((h, i) => {
+        const f = map[i]; const val = (cells[i] == null ? "" : cells[i]).trim(); if (!val || f === "_ignore") return;
+        if (f === "Experience (yrs)" || f === "Current CTC (LPA)" || f === "Expected CTC (LPA)") o[f] = num(val);
+        else if (f === "Phone") { phone = val; o.Phone = val; }
+        else if (f === "Email") { email = val; o.Email = val; }
+        else if (f === "Candidate" || f === "Role" || f === "Client" || f === "SPOC" || f === "Status" || f === "Notice Period") o[f] = val;
+        else if (f === "Notes") extra.push(val);
+        else if (f) extra.push((NOTE_LABEL[f] || f) + ": " + val);
+        else extra.push(h + ": " + val);
+      });
+      const contact = [phone ? "📞 " + phone : "", email ? "✉ " + email : ""].filter(Boolean).join(" · ");
+      o.Notes = [contact, extra.join(" · ")].filter(Boolean).join(" · ");
+      return o;
+    }).filter((o) => o.Candidate);
+    return { rows, headers };
+  }
+  function dImport() {
+    sheet("Import candidates", `
+      <div class="hint" style="margin-bottom:8px">Paste the profile table from your Outlook email (or the Excel/Word you built it in). The <b>first row must be the column headings</b> (Name, Role, Experience, Current CTC, Expected CTC, Notice…).</div>
+      <textarea id="imp" rows="7" placeholder="Name	Role	Experience	Current CTC	Expected CTC	Notice Period" style="width:100%;font-family:monospace;font-size:12px"></textarea>
+      <div class="f2" style="margin-top:8px">${field("Apply Client (optional)", "dclient", "")}${field("Apply Role (optional)", "drole", "")}</div>
+      <div class="f"><label>Attach all to a requirement (optional)</label><select name="dreq"><option value="">— none —</option>${reqOpts().map((o) => `<option>${esc(o)}</option>`).join("")}</select></div>
+      <button class="btn block" id="prev">Preview</button>
+      <div id="impprev" style="margin-top:10px"></div>
+      <button class="btn pri block" id="impadd" style="margin-top:10px;display:none">Add candidates</button>`, (el, close) => {
+      let parsed = { rows: [] };
+      const doPrev = () => {
+        parsed = parseCandTable($("#imp", el).value);
+        const box = $("#impprev", el), add = $("#impadd", el);
+        if (!parsed.rows.length) { box.innerHTML = '<div class="empty">Couldn\'t read candidate rows. Check the first row is headings and there\'s a Name/Candidate column.</div>'; add.style.display = "none"; return; }
+        const cols = [["Candidate", "Candidate"], ["Role", "Role"], ["Phone", "Phone"], ["Experience (yrs)", "Exp"], ["Current CTC (LPA)", "CCTC"], ["Expected CTC (LPA)", "ECTC"], ["Notice Period", "Notice"]];
+        box.innerHTML = `<div class="hint" style="margin-bottom:6px">Found <b>${parsed.rows.length}</b> candidate(s):</div>
+          <div style="overflow:auto;border:2px solid var(--b);border-radius:10px"><table style="border-collapse:collapse;font-size:12px;width:100%">
+          <tr>${cols.map(([, h]) => `<th style="text-align:left;padding:5px 7px;border-bottom:2px solid var(--b)">${h}</th>`).join("")}</tr>
+          ${parsed.rows.map((r) => `<tr>${cols.map(([k]) => `<td style="padding:5px 7px;border-bottom:1px solid rgba(120,90,50,.18)">${esc(r[k] == null ? "" : r[k])}</td>`).join("")}</tr>`).join("")}
+          </table></div>`;
+        add.style.display = "block"; add.textContent = `Add ${parsed.rows.length} candidate(s)`;
+      };
+      $("#prev", el).onclick = doPrev;
+      $("#imp", el).addEventListener("input", () => { if ($("#impprev", el).innerHTML) doPrev(); });
+      $("#impadd", el).onclick = () => {
+        const f = form(el);
+        const rid = f.dreq ? String(f.dreq).split(" · ")[0] : "";
+        const rr = rid ? dreqs().find((x) => x["Req ID"] === rid) : null;
+        let n = 0;
+        parsed.rows.forEach((r) => {
+          API.add("delivery", {
+            Candidate: r.Candidate, "Req ID": rid,
+            Client: r.Client || (rr && rr.Client) || f.dclient || "",
+            Role: r.Role || (rr && rr.Role) || f.drole || "",
+            SPOC: (rr && rr.SPOC) || "",
+            Submitted: today(), Status: (r.Status && DSTATUS.includes(r.Status)) ? r.Status : "TA Shared",
+            "Next Follow-up": D.addBiz(today(), 2), Phone: r.Phone || "", Email: r.Email || "",
+            "Experience (yrs)": r["Experience (yrs)"] == null ? "" : r["Experience (yrs)"], "Notice Period": r["Notice Period"] || "",
+            "Current CTC (LPA)": r["Current CTC (LPA)"] == null ? "" : r["Current CTC (LPA)"], "Expected CTC (LPA)": r["Expected CTC (LPA)"] == null ? "" : r["Expected CTC (LPA)"],
+            Notes: r.Notes || "",
+          }); n++;
+        });
+        close(); toast(`Imported ${n} candidate(s)`); render();
       };
     });
   }
@@ -1896,6 +2009,8 @@
     if (ae && $("#view") && $("#view").contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) return; // don't disturb typing
     render();
   });
+  // Remember which dashboard sections the user collapsed
+  document.addEventListener("toggle", (e) => { const d = e.target; if (d && d.classList && d.classList.contains("secwrap") && d.dataset.seck) { try { localStorage.setItem(d.dataset.seck, d.open ? "1" : "0"); } catch (e2) {} } }, true);
   window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
   window.addEventListener("online", () => { Store.flush(); Store.refresh(true); });
   window.addEventListener("offline", () => { S.status = "offline"; syncPill(); });
