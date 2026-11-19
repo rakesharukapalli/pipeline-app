@@ -20,29 +20,35 @@
       actSave(o);
     } catch (e) {}
   }
+  // Everything except Delivery is tracked. Known tables get a friendly line; anything else
+  // falls back to a generic "record · changed fields" so nothing is ever missed.
+  const TABLE_LABEL = { pipeline: "Deal", leads: "Lead", commitments: "Commitment", meetings: "Meeting", deliveryReqs: "Requirement", requirements: "Requirement", proposals: "Proposal", contacts: "Contact", accounts: "Client", intel: "Market intel", contracts: "Contract", events: "Event", targets: "Target", library: "Library" };
+  const recName = (r) => r.Account || r.Name || r.SPOC || r.Commitment || r.Role || r["Role / Skill"] || r.Contact || r.Client || r.Title || r["Event / Referral"] || r["Deal ID"] || "";
+  const DATE_FLD = /(date|follow[- ]?up|received|submitted|signed|deployed|qualified|due|start|last contact)/i;
+  const fmtActV = (h, v) => { if (v === "" || v == null) return ""; if (typeof v === "number" && DATE_FLD.test(h) && v > 20000 && v < 90000) return D.fmt(v, { abs: 1 }); return String(v).slice(0, 60); };
   const ADD_DESC = {
-    activity: (v) => `${v.Channel || "Touch"} · ${v.Outcome || ""} — ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}${v["Next Step"] ? " · next: " + v["Next Step"] : ""}`,
+    activity: (v) => `${v.Channel || "Touch"} · ${v.Outcome || ""} — ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}${v["Next Step"] ? " · next: " + v["Next Step"] : ""}${isNum(v["Next Step Date"]) ? " · f/u " + D.fmt(v["Next Step Date"], { abs: 1 }) : ""}`,
     pipeline: (v) => `New deal · ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}`,
-    delivery: (v) => `New candidate · ${v.Candidate || ""}${v.Role ? " — " + v.Role : ""}${v.Client ? " @ " + v.Client : ""}`,
     leads: (v) => `New lead · ${v.Name || ""}${v.Organization ? " (" + v.Organization + ")" : ""}`,
-    commitments: (v) => `Commitment · ${v.Commitment || ""}`,
-    meetings: (v) => `Meeting booked · ${v.Account || ""}`,
+    commitments: (v) => `New commitment · ${v.Commitment || ""}`,
+    meetings: (v) => `Meeting booked · ${v.Account || ""}${isNum(v.Date) ? " · " + D.fmt(v.Date, { abs: 1 }) : ""}`,
     deliveryReqs: (v) => `New requirement · ${v.Role || ""}${v.Client ? " @ " + v.Client : ""}`,
     requirements: (v) => `New requirement · ${v["Role / Skill"] || v.Role || ""}`,
-    proposals: (v) => `Proposal · ${v.Account || ""}`,
+    proposals: (v) => `New proposal · ${v.Account || ""}`,
     contacts: (v) => `New contact · ${v.SPOC || ""}${v.Client ? " @ " + v.Client : ""}`,
   };
-  const UPD_DESC = {
-    pipeline: (row, ch) => { const b = []; if (ch.Stage) b.push("stage → " + ch.Stage); if (ch.Temperature) b.push(ch.Temperature); if (!ch.Stage && !ch.Temperature && ch["Next Step Date"] !== undefined) b.push("rescheduled"); return b.length ? `${row.Account || "Deal"} · ${b.join(", ")}` : ""; },
-    delivery: (row, ch) => (ch.Status !== undefined || ch["Next Follow-up"] !== undefined) ? `${row.Candidate || "Candidate"} · ${ch.Status || "follow-up updated"}` : "",
-    commitments: (row, ch) => ch.Status ? `Commitment · ${row.Commitment || ""} → ${ch.Status}` : "",
-    meetings: (row, ch) => ch.Status ? `Meeting · ${row.Account || ""} → ${ch.Status}` : "",
-    leads: (row, ch) => `Lead updated · ${row.Name || ""}`,
-  };
+  function describeAdd(t, v) { if (ADD_DESC[t]) return ADD_DESC[t](v); const nm = recName(v); return `New ${TABLE_LABEL[t] || t}${nm ? " · " + nm : ""}`; }
+  function describeUpdate(t, row, ch) {
+    const parts = [];
+    Object.keys(ch).forEach((h) => { if (h.charAt(0) === "_" || Store.isCalc(h)) return; const s = fmtActV(h, ch[h]); parts.push(s === "" ? h + " cleared" : h + ": " + s); });
+    if (!parts.length) return "";
+    return `${recName(row) || TABLE_LABEL[t] || t} · ${parts.join(", ")}`;
+  }
+  const ACT_SKIP = { delivery: 1, deliveryReqs: 1 };   // the whole Delivery module is excluded, per request
   function recordAct(k, a) {
     if (suppressAct) return;
-    if (k === "add") { const f = ADD_DESC[a[0]]; if (f) logAct(f(a[1] || {})); }
-    else if (k === "update") { const f = UPD_DESC[a[0]]; if (f) logAct(f(a[1] || {}, a[2] || {})); }
+    if (k === "add") { const t = a[0]; if (ACT_SKIP[t]) return; logAct(describeAdd(t, a[1] || {})); }
+    else if (k === "update") { const t = a[0]; if (ACT_SKIP[t]) return; logAct(describeUpdate(t, a[1] || {}, a[2] || {})); }
   }
 
   // Dashboard scope: "all" (consolidated) | "core" (existing pipeline) | "gcc" (new GCC hunt)
@@ -725,8 +731,11 @@
         const changes = { "Last Contact": t, "Next Step": f.next, "Next Step Date": nd || "", Temperature: temp, Stage: f.stage, Notes: (noteLine + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500) };
         if (f.stage === "Qualified" && r["Qualified?"] !== "Y") { changes["Qualified?"] = "Y"; if (!isNum(r["Qualified Date"])) changes["Qualified Date"] = t; }
         if (oc === "Not interested" || (f.stage !== r.Stage && f.stage !== "Contact Established")) { /* keep blocker */ }
+        const stageMoved = changes.Stage && changes.Stage !== r.Stage;
         API.add("activity", { Date: t, "Deal ID": r["Deal ID"], Account: r.Account, Contact: r.Contact, Channel: ch, Outcome: oc, Notes: f.notes, "Next Step": f.next, "Next Step Date": nd || "", "Logged By": C.owner || "" });
-        API.update("pipeline", r, changes); ttAutoDeal(r);
+        suppressAct = true; API.update("pipeline", r, changes); suppressAct = false;   // touch already logged via the activity entry above
+        if (stageMoved) logAct(`${r.Account} · stage → ${changes.Stage}`);
+        ttAutoDeal(r);
         const oc_ch = CH_MAP[ch];
         if (oc_ch) {
           API.inc(oc_ch, "Activities", 1);
@@ -1275,7 +1284,7 @@
       wireDateChips(el);
       $("#save", el).onclick = () => {
         const f = form(el); const ch = chipVal(el, "ch"); const t = today();
-        API.update("contacts", c, { "Last Follow-up": t, "Next Follow-up": f.nf || "", Status: chipVal(el, "st"), Notes: f.notes || c.Notes });
+        suppressAct = true; API.update("contacts", c, { "Last Follow-up": t, "Next Follow-up": f.nf || "", Status: chipVal(el, "st"), Notes: f.notes || c.Notes }); suppressAct = false;  // logged via the activity entry below
         API.add("activity", { Date: t, "Deal ID": "", Account: c.Client, Contact: c.SPOC, Channel: ch, Outcome: chipVal(el, "st"), Notes: f.notes, "Next Step": "", "Next Step Date": f.nf || "", "Logged By": C.owner });
         if (CH_MAP[ch]) API.inc(CH_MAP[ch], "Activities", 1);
         close(); toast("Logged"); render();
