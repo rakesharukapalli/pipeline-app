@@ -14,5 +14,7 @@ window.APP_CONFIG = {
   workbookUrl: "https://docs.google.com/spreadsheets/d/1b-4vrsjsxR_Sayx1yWJaNKuPEPgvTs1fKG1H1qMI7Yc/edit?gid=1522304945#gid=1522304945",
   timeZone: "India Standard Time",
   pollSeconds: 20,
-  clientId: ""
+  clientId: "",
+  aiUrl: "https://ifpipeline-ai.rakesharukapalli.workers.dev",
+  aiToken: "Navi@1623"
 };
