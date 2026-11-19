@@ -307,3 +307,6 @@ summary.sec{cursor:pointer;list-style:none}
 summary.sec::-webkit-details-marker{display:none}
 .secchev{font-size:12px;color:var(--ink-3);transition:transform .15s;flex:none}
 .secwrap[open] .secchev{transform:rotate(180deg)}
+
+/* keep icons inside buttons small (copy, etc.) */
+.btn svg{width:16px;height:16px;vertical-align:-3px;flex:none}

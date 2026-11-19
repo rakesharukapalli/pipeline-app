@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v39";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v40";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -229,6 +229,18 @@
   // Fire-and-forget push when the user changes a follow-up in the app.
   function ttAutoDeal(r) { if (!B.demo && !ttPaused() && ttState.connected && isNum(r["Next Step Date"])) ttPushDeal(r).catch(() => {}); }
   function ttAutoCommit(c) { if (!B.demo && !ttPaused() && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttPushCommit(c).catch(() => {}); }
+
+  // ---------------- AI (optional, via your private Cloudflare Workers AI endpoint)
+  const aiOn = () => !!(C.aiUrl && !/PASTE/.test(C.aiUrl));
+  async function aiAsk(messages) {
+    if (!aiOn()) throw new Error("AI isn't set up yet (add aiUrl in config.js)");
+    let res;
+    try { res = await fetch(C.aiUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ token: C.aiToken || "", messages }) }); }
+    catch (e) { throw new Error("Can't reach the AI service — check the Worker URL"); }
+    const txt = await res.text(); let j; try { j = JSON.parse(txt); } catch (e) { throw new Error("Unexpected AI response"); }
+    if (j.error) throw new Error(j.error);
+    return String(j.text || j.result || "").trim();
+  }
 
   const I = {
     today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -1432,7 +1444,8 @@
     const summaryCard = total ? `<div class="sec"><h2>Summary — ${esc(modeLabel)}</h2></div>
       <div class="card">${sumLines.map((l) => `<div style="margin-bottom:6px">${esc(l)}</div>`).join("") || '<div class="hint">Activity recorded — see the list below.</div>'}
       ${notesTop.length ? `<div style="font-size:12px;color:var(--ink-3);margin:8px 0 4px">Key notes / comments</div><ul style="margin:0 0 0 18px;font-size:13px;padding:0">${notesTop.map((n) => `<li style="margin-bottom:3px">${esc(n)}</li>`).join("")}</ul>` : ""}
-      <button class="btn block" id="copysum" style="margin-top:10px">${I.copy} Copy summary for leadership</button></div>` : "";
+      <button class="btn block" id="copysum" style="margin-top:10px">${I.copy} Copy summary for leadership</button>
+      ${aiOn() ? `<button class="btn pri block" id="aisum" style="margin-top:8px">✨ AI summary & advice</button><div id="aiout"></div>` : ""}</div>` : "";
     const summaryText = () => `${modeLabel} · ${rangeText}\n` + (sumLines.length ? sumLines.map((l) => "• " + l).join("\n") : "• Activity recorded.") + (notesTop.length ? "\n\nKey notes:\n" + notesTop.map((n) => "- " + n).join("\n") : "");
     const dayBlock = (dd) => `<div class="sec"><h2>${esc(dayLabel(dd.d))}</h2><span class="count">${dd.e.length}</span></div>
       <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${e.noTime ? "" : fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
@@ -1449,6 +1462,19 @@
       mount: (el) => {
         $("#dayseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { dayLogMode = b.dataset.o; render(); } };
         const cs = $("#copysum", el); if (cs) cs.onclick = () => { copyText(summaryText()); toast("Summary copied — ready for leadership"); };
+        const ai = $("#aisum", el); if (ai) ai.onclick = async () => {
+          const old = ai.innerHTML; ai.disabled = true; ai.innerHTML = "Thinking…";
+          try {
+            const ctx = `Period: ${modeLabel} (${rangeText})\n\nActivity stats:\n${sumLines.join("\n") || "(none)"}\n\nNotes & comments:\n${notesTop.join("\n") || "(none)"}`;
+            const text = await aiAsk([
+              { role: "system", content: "You are a sales-operations assistant for a B2B IT staffing and GCC (Global Capability Centre) sales leader in India. Using ONLY the data provided, write a crisp leadership update: (1) a 2-3 sentence narrative of the period, (2) 2-4 key highlights as bullets, (3) 2-3 risks or recommended next actions. Reference the specific accounts and numbers given. Do not invent any data. Keep it under ~180 words." },
+              { role: "user", content: ctx },
+            ]);
+            $("#aiout", el).innerHTML = `<div class="card" style="white-space:pre-wrap;margin-top:8px">${esc(text)}</div><button class="btn block" id="aicopy" style="margin-top:8px">${I.copy} Copy AI update</button>`;
+            const ac = $("#aicopy", el); if (ac) ac.onclick = () => { copyText(text); toast("AI update copied"); };
+          } catch (e) { toast("AI: " + (e.message || e), "warn"); }
+          ai.disabled = false; ai.innerHTML = old;
+        };
         const cp = $("#copyday", el); if (cp) cp.onclick = () => {
           const head = `${DAY_MODES.find((m) => m[0] === dayLogMode)[1]} · ${rangeText} (${total} actions)`;
           const txt = head + "\n\n" + days.map((dd) => dayLabel(dd.d) + "\n" + dd.e.map((e) => `• ${e.noTime ? "" : fmtT(e.t) + " — "}${e.x}`).join("\n")).join("\n\n");
