@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v40";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v42";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -56,6 +56,7 @@
   // Dashboard scope: "all" (consolidated) | "core" (existing pipeline) | "gcc" (new GCC hunt)
   let dashScope = (() => { try { return localStorage.getItem("pp.dash") || "all"; } catch (e) { return "all"; } })();
   const setDashScope = (v) => { dashScope = v; try { localStorage.setItem("pp.dash", v); } catch (e) {} };
+  let askMsgs = [];   // in-memory AI chat thread for the Ask / advisor screen (cleared on reload)
 
   // ------------------------------------------------------------------ helpers
   const esc = (v) => (v == null ? "" : String(v)).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -68,6 +69,12 @@
     return "₹" + (n / 1e5).toFixed(n >= 1e6 ? 0 : 1).replace(/\.0$/, "") + "L";
   }
   const pct = (v) => (isNum(v) ? (v * 100).toFixed(1).replace(/\.0$/, "") + "%" : "");
+  // tiny markdown: escape, then **bold**, `code`, and leading "- "/"* " bullets (kept readable with pre-wrap)
+  function mdLite(s) {
+    let h = esc(s);
+    h = h.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|\n)\s*[-*]\s+/g, "$1• ").replace(/`([^`]+)`/g, "<code>$1</code>");
+    return h;
+  }
   function phones(p) { return String(p || "").split(/[\/,;]| or /).map((x) => x.replace(/[^\d+]/g, "")).filter((x) => x.replace(/\D/g, "").length >= 8); }
   function telLink(p) { const a = phones(p)[0]; return a ? "tel:" + a : ""; }
   function waLink(p) { let a = (phones(p)[0] || "").replace(/\D/g, ""); if (!a) return ""; if (a.length === 10) a = "91" + a; return "https://wa.me/" + a; }
@@ -1483,8 +1490,149 @@
       },
     };
   };
+  // ---------------- AI pipeline snapshot: a compact, data-only picture the model reasons over
+  function aiSnapshot() {
+    const t = today();
+    const ds = deals().map((r) => ({ r, x: deal(r) }));
+    const open = ds.filter((d) => d.x.open);
+    const stages = L("Stage");
+    const funnel = stages.map((s) => ({ s, n: ds.filter((d) => d.r.Stage === s).length })).filter((f) => f.n);
+    const overdue = open.filter((d) => d.x.follow === "Overdue").length;
+    const noNext = open.filter((d) => d.x.follow === "No next step").length;
+    const hot = open.filter((d) => d.r.Temperature === "Hot").length, warm = open.filter((d) => d.r.Temperature === "Warm").length;
+    const cold = open.filter((d) => d.x.days != null && d.x.days >= 21).length;
+    const weighted = ds.reduce((s, d) => s + (d.x.open ? d.x.weighted || 0 : 0), 0);
+    const line = ({ r, x }) => [
+      r.Account, r.Stage, (r.Temperature || "?"),
+      x.follow === "No next step" ? "NO next step" : x.follow + (isNum(r["Next Step Date"]) ? " " + D.fmt(r["Next Step Date"], { abs: 1 }) : ""),
+      x.days != null ? x.days + "d since contact" : "never contacted",
+      r["Est. Monthly Billing (INR)"] ? fmtL(r["Est. Monthly Billing (INR)"]) + "/mo" : "",
+      r["Qualified?"] === "Y" ? "qualified" : "",
+      r["Service Line"] || "", r.City || "",
+      r.Blocker ? "BLOCKER: " + r.Blocker : "",
+      r["Next Step"] ? "next: " + r["Next Step"] : "",
+    ].filter(Boolean).join(" | ");
+    const openList = open.sort((a, b) => b.x.score - a.x.score).slice(0, 45).map(line);
+    const nurture = ds.filter((d) => d.r.Stage === "Nurture").map((d) => d.r.Account);
+    const lost = ds.filter((d) => d.r.Stage === "Lost").map((d) => d.r.Account);
+    const won = ds.filter((d) => d.r.Stage === "Won - Deployed").map((d) => d.r.Account);
+    // leads, commitments, requirements/logos
+    const lds = live("leads").filter((l) => !deals().some((d) => d.Account === l.Organization));
+    const commits = live("commitments").filter((c) => ["Proposed", "Committed"].includes(c.Status))
+      .map((c) => `${c.Commitment}${c.Account ? " (" + c.Account + ")" : ""} — due ${isNum(c["Due Date"]) ? D.fmt(c["Due Date"], { abs: 1 }) : "?"} · ${c.Status}`);
+    const logosQ = live("requirements").filter((r) => /deployed|placed|joined/i.test(r.Status || "")).length;
+    // recent activity (last 14 days)
+    const recent = live("activity").filter((a) => isNum(a.Date) && a.Date >= t - 14);
+    const byCh = {}; recent.forEach((a) => { const c = a.Channel || "Other"; byCh[c] = (byCh[c] || 0) + 1; });
+    const chStr = Object.keys(byCh).sort((a, b) => byCh[b] - byCh[a]).map((c) => byCh[c] + "× " + c).join(", ");
+    const L2 = [];
+    L2.push(`Company: InitiateFirst — B2B IT staffing & GCC sales, India. Date: ${D.fmt(t, { abs: 1 })}.`);
+    L2.push(`Targets: ${setting("LogoTarget", 2)} logos/quarter. Logos won so far: ${won.length}.`);
+    L2.push("");
+    L2.push(`FUNNEL (deals per stage): ${funnel.map((f) => f.s + "=" + f.n).join(", ")}`);
+    L2.push(`Open deals: ${open.length} (Hot ${hot}, Warm ${warm}). Overdue follow-ups: ${overdue}. No next step set: ${noNext}. Gone cold (21d+ no contact): ${cold}.`);
+    L2.push(`Weighted open pipeline (billing × stage prob): ${fmtL(weighted) || "—"}/mo.`);
+    if (nurture.length) L2.push(`Nurture (parked): ${nurture.join(", ")}`);
+    if (won.length) L2.push(`Won: ${won.join(", ")}`);
+    if (lost.length) L2.push(`Lost: ${lost.join(", ")}`);
+    L2.push("");
+    L2.push(`OPEN DEALS (sorted by priority; "field | field"): `);
+    L2.push(openList.join("\n") || "(none)");
+    L2.push("");
+    if (lds.length) L2.push(`LEADS not yet in pipeline (${lds.length}): ${lds.slice(0, 20).map((l) => (l.Name || "?") + (l.Organization ? " @ " + l.Organization : "")).join("; ")}`);
+    if (commits.length) { L2.push(""); L2.push("COMMITMENTS (open):"); L2.push(commits.join("\n")); }
+    // ---- DELIVERY pipeline (candidates + requirements) — read-only, for Q&A
+    const cands = live("delivery"), dreqs = live("deliveryReqs");
+    if (cands.length || dreqs.length) {
+      L2.push("");
+      const byStatus = {}; cands.forEach((c) => { const s = c.Status || "No status"; byStatus[s] = (byStatus[s] || 0) + 1; });
+      const stStr = Object.keys(byStatus).sort((a, b) => byStatus[b] - byStatus[a]).map((s) => byStatus[s] + " " + s).join(", ");
+      L2.push(`DELIVERY — ${cands.length} candidate(s)${stStr ? " (" + stStr + ")" : ""}, ${dreqs.length} requirement(s).`);
+      if (dreqs.length) {
+        const openR = dreqs.filter((r) => !/closed|filled|cancel|on hold/i.test(r.Status || ""));
+        L2.push("Open requirements: " + (openR.length ? openR.slice(0, 20).map((r) => `${r.Role || "?"}${r.Client ? " @ " + r.Client : ""}${r.Priority ? " · " + r.Priority : ""}${r.Status ? " · " + r.Status : ""}${r.Budget ? " · budget " + r.Budget : ""}`).join("; ") : "(none)"));
+      }
+      if (cands.length) {
+        const cline = (c) => [c.Candidate || c.Name, c.Role, c.Client, c.Status,
+          isNum(c["Interview Date"]) ? "interview " + D.fmt(c["Interview Date"], { abs: 1 }) : "",
+          isNum(c["Next Follow-up"]) ? "f/u " + D.fmt(c["Next Follow-up"], { abs: 1 }) : "",
+          c["Experience (yrs)"] ? c["Experience (yrs)"] + "y exp" : "", c["Notice Period"] ? "NP " + c["Notice Period"] : "",
+          c["Expected CTC (LPA)"] ? "ECTC " + c["Expected CTC (LPA)"] : ""].filter(Boolean).join(" | ");
+        L2.push('Candidates ("field | field"):');
+        L2.push(cands.slice(0, 35).map(cline).join("\n"));
+      }
+    }
+    // ---- COLLATERAL LIBRARY (pitch decks, presentations, templates) — titles/tags/links only
+    const libs = live("library");
+    if (libs.length) {
+      L2.push("");
+      L2.push(`COLLATERAL LIBRARY (${libs.length} files — decks, presentations, templates. You can recommend which file to use and give its link, but you CANNOT read inside the linked files):`);
+      L2.push(libs.slice(0, 35).map((l) => [l.Title || l.Category || "?", l.Type || l.Category, l.Tags ? "tags: " + l.Tags : "", l.Body ? "— " + String(l.Body).slice(0, 140) : "", l.Link ? "link: " + l.Link : ""].filter(Boolean).join(" | ")).join("\n"));
+    }
+    L2.push("");
+    L2.push(`ACTIVITY last 14 days: ${recent.length} logged touches${chStr ? " (" + chStr + ")" : ""}.`);
+    return L2.join("\n");
+  }
+  const AI_PERSONA = "You are an expert sales-operations advisor built into the pipeline app of a B2B IT staffing and GCC (Global Capability Centre) sales leader in India (company: InitiateFirst). You are given a LIVE SNAPSHOT covering THREE things: (A) the SALES pipeline (deals, funnel, leads, commitments), (B) the DELIVERY pipeline (candidates and open requirements), and (C) a COLLATERAL LIBRARY of sales files (pitch decks, presentations, templates) listed by title, type, tags and link. Rules: (1) Use ONLY the snapshot data — never invent accounts, candidates, files, numbers or facts not present. (2) Be specific — name the actual accounts/candidates/files and cite the real numbers. (3) Give practical, prioritised, action-oriented advice; prefer a short ranked list with a one-line 'why' each. (4) For the collateral library you may recommend the best file and give its link, but you CANNOT read the contents inside the linked files, so never quote or summarise their internal slides/pages — only use the title, type, tags and description shown. (5) If the data lacks what's needed, say so in one line. (6) Keep it focused (~220 words) unless asked for more. Use plain text with simple bullets.";
+  const ASK_PRESETS = [
+    ["📊 Analyse my funnel", "Analyse my current sales funnel. Where are deals concentrated, where is the likely drop-off, and what does the shape tell me? Name the accounts in each key stage."],
+    ["⚠️ What's at risk?", "Which of my open deals are most at risk of slipping or going cold, and why? Give me a prioritised list with the single best next action for each."],
+    ["🎯 Focus this week", "Based on my pipeline, what are the 3–5 most important things I should focus on this week? Be specific about which accounts and why."],
+    ["📈 Pipeline health", "Assess the overall health of my pipeline. Am I set up to hit my logo and revenue targets this quarter? What's the biggest gap, and what should I do about it?"],
+    ["🔁 Nudge the cold ones", "List the deals that have gone cold or have no next step, and for each suggest a specific re-engagement move I can do this week."],
+    ["👥 Delivery status", "Give me a snapshot of my delivery pipeline: candidates by stage, upcoming interviews, and which open requirements still need profiles. Flag anything that needs my attention."],
+    ["📁 Which file to send", "From my collateral library, recommend the best file to send for my most important active deal, say why it fits, and give me its link. If nothing fits, tell me what's missing."],
+  ];
+  V.ask = () => {
+    if (!aiOn()) return { title: "Ask AI", back: true, html: `<div class="card"><b>AI isn't set up yet.</b><p class="hint">Add your Cloudflare Worker URL in config.js (aiUrl + aiToken) to enable the AI assistant. See the AI setup guide.</p></div>` };
+    const bubble = (m) => m.role === "user"
+      ? `<div style="align-self:flex-end;max-width:85%;background:var(--ink);color:var(--bg);padding:9px 13px;border-radius:16px 16px 4px 16px;font-size:14px;font-weight:600;white-space:pre-wrap">${esc(m.content)}</div>`
+      : `<div class="card" style="align-self:flex-start;max-width:93%;margin:0;padding:12px 14px;border-radius:16px 16px 16px 4px;font-size:14px;white-space:pre-wrap">${mdLite(m.content)}<div style="margin-top:9px"><button class="btn aicopybtn" data-i="0" style="padding:4px 10px;font-size:11px">${I.copy} Copy</button></div></div>`;
+    const thread = askMsgs.length
+      ? `<div id="aithread" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">${askMsgs.map(bubble).join("")}</div>`
+      : `<div class="card" style="margin-bottom:12px"><b>Your AI pipeline assistant</b><p class="hint" style="margin:6px 0 0">Ask anything across your <b>sales pipeline</b>, <b>delivery pipeline</b> (candidates &amp; requirements) and <b>collateral library</b> (decks &amp; templates). Try a quick analysis below, or type your own question.</p></div>`;
+    return {
+      title: "Ask AI", back: true, html: `
+      ${thread}
+      <div class="seg" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${ASK_PRESETS.map(([lbl], i) => `<button class="askpreset" data-i="${i}" style="font-size:12.5px">${esc(lbl)}</button>`).join("")}</div>
+      <div class="card" style="padding:10px">
+        <textarea id="askbox" rows="2" placeholder="Ask about your pipeline… e.g. 'Which hot deals haven't I touched in 2 weeks?'" style="width:100%;border:1px solid var(--b);border-radius:10px;padding:10px;font:inherit;font-size:14px;resize:vertical;box-sizing:border-box"></textarea>
+        <div class="acts" style="margin-top:8px;display:flex;gap:8px"><button class="btn pri" id="asksend" style="flex:1">${I.out} Ask</button>${askMsgs.length ? '<button class="btn" id="askclear">Clear</button>' : ""}</div>
+        <div class="hint" style="margin-top:6px;font-size:11.5px">Reads your sales pipeline, delivery pipeline & collateral library. Advice only — always use your judgement.</div>
+      </div>`,
+      mount: (el) => {
+        const box = $("#askbox", el), out = $("#aithread", el);
+        const wireCopies = () => $$(".aicopybtn", el).forEach((b) => { b.onclick = () => { const i = +b.dataset.i; copyText(askMsgs[i] ? askMsgs[i].content : ""); toast("Copied"); }; });
+        // fix copy indices (each assistant bubble copies its own message)
+        $$("#aithread > div", el).forEach((d, i) => { const b = d.querySelector(".aicopybtn"); if (b) b.dataset.i = i; });
+        wireCopies();
+        const ask = async (q) => {
+          q = (q || "").trim(); if (!q) return;
+          askMsgs.push({ role: "user", content: q });
+          render();  // show the question immediately
+          try {
+            const snap = aiSnapshot();
+            const text = await aiAsk([
+              { role: "system", content: AI_PERSONA },
+              { role: "system", content: "LIVE PIPELINE SNAPSHOT:\n" + snap },
+              ...askMsgs.slice(-8),
+            ]);
+            askMsgs.push({ role: "assistant", content: text || "(no answer)" });
+          } catch (e) { askMsgs.push({ role: "assistant", content: "⚠️ " + (e.message || e) }); }
+          render();
+          window.scrollTo(0, document.body.scrollHeight);
+        };
+        const sendBtn = $("#asksend", el);
+        if (sendBtn) sendBtn.onclick = () => { if (box && box.value.trim()) ask(box.value); };
+        if (box) box.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); if (box.value.trim()) ask(box.value); } });
+        $$(".askpreset", el).forEach((b) => { b.onclick = () => ask(ASK_PRESETS[+b.dataset.i][1]); });
+        const clr = $("#askclear", el); if (clr) clr.onclick = () => { askMsgs = []; render(); };
+        if (box) box.focus();
+      },
+    };
+  };
   V.more = () => {
-    const tiles = [["#/daylog", I.today, "My activity", "Daily / weekly / monthly / quarterly"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/daylog", I.today, "My activity", "Daily / weekly / monthly / quarterly"], ...(aiOn() ? [["#/ask", I.out, "Ask AI", "Funnel advice, risks, focus — over your live pipeline"]] : []), ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/datacheck", I.search, "Data check", "Missing contacts & duplicate IDs"], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
