@@ -1388,16 +1388,26 @@
     else if (mode === "quarter") { start.setMonth(Math.floor(start.getMonth() / 3) * 3, 1); }
     return { start, end };
   }
+  const actRowText = (a) => `${a.Channel || "Touch"} · ${a.Outcome || ""} — ${a.Account || ""}${a.Contact ? " (" + a.Contact + ")" : ""}${a["Next Step"] ? " · next: " + a["Next Step"] : ""}${isNum(a["Next Step Date"]) ? " · f/u " + D.fmt(a["Next Step Date"], { abs: 1 }) : ""}`;
+  const actNorm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
   V.daylog = () => {
     const log = actStore();
     const { start, end } = dayRange(dayLogMode);
-    const days = []; let total = 0;
-    for (let d = new Date(end); d >= start; d.setDate(d.getDate() - 1)) { const k = d.toLocaleDateString("en-CA"); const e = (log[k] || []).slice().sort((a, b) => a.t - b.t); if (e.length) { days.push({ d: new Date(d), e }); total += e.length; } }
+    const startKey = start.toLocaleDateString("en-CA"), endKey = end.toLocaleDateString("en-CA");
+    const sSer = D.fromISO(startKey), eSer = D.fromISO(endKey);
+    const byDay = {};  // yyyy-mm-dd -> { entries:[], seen:Set }
+    const push = (key, t, x, noTime) => { if (!x) return; const g = (byDay[key] = byDay[key] || { entries: [], seen: new Set() }); const n = actNorm(x); if (g.seen.has(n)) return; g.seen.add(n); g.entries.push({ t, x, noTime }); };
+    // 1) this device's local log
+    Object.keys(log).forEach((k) => { if (k >= startKey && k <= endKey) (log[k] || []).forEach((e) => push(k, e.t, e.x, false)); });
+    // 2) the Activity Log sheet — persistent touches across time & devices (the real history)
+    live("activity").forEach((a) => { if (!isNum(a.Date) || a.Date < sSer || a.Date > eSer) return; push(D.toISO(a.Date), D.toJS(a.Date).getTime() + 126e5, actRowText(a), true); });
+    const days = Object.keys(byDay).sort().reverse().map((k) => ({ d: new Date(k + "T00:00:00"), e: byDay[k].entries.sort((a, b) => a.t - b.t) }));
+    let total = 0; days.forEach((dd) => (total += dd.e.length));
     const rangeText = dayLogMode === "today" || dayLogMode === "yesterday" ? dayLabel(start) : `${dayLabel(start)} – ${dayLabel(end)}`;
     const dayBlock = (dd) => `<div class="sec"><h2>${esc(dayLabel(dd.d))}</h2><span class="count">${dd.e.length}</span></div>
-      <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
+      <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${e.noTime ? "" : fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
     const body = days.length ? days.map(dayBlock).join("")
-      : '<div class="card"><div class="empty">Nothing logged in this period yet. Follow-ups, stage moves, new candidates, meetings, imports — everything you do in the app shows up here for your stand-up & reviews.</div></div>';
+      : '<div class="card"><div class="empty">Nothing in this period. This shows logged touches/follow-ups from your sheet plus edits you make in the app. Older history only appears if it was logged through the app.</div></div>';
     return {
       title: "My activity", back: true, html: `
       <div class="seg" id="dayseg" style="margin-bottom:10px;flex-wrap:wrap">${DAY_MODES.map(([v, l]) => `<button data-o="${v}" class="${dayLogMode === v ? "on" : ""}">${l}</button>`).join("")}</div>
@@ -1408,7 +1418,7 @@
         $("#dayseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { dayLogMode = b.dataset.o; render(); } };
         const cp = $("#copyday", el); if (cp) cp.onclick = () => {
           const head = `${DAY_MODES.find((m) => m[0] === dayLogMode)[1]} · ${rangeText} (${total} actions)`;
-          const txt = head + "\n\n" + days.map((dd) => dayLabel(dd.d) + "\n" + dd.e.map((e) => `• ${fmtT(e.t)} — ${e.x}`).join("\n")).join("\n\n");
+          const txt = head + "\n\n" + days.map((dd) => dayLabel(dd.d) + "\n" + dd.e.map((e) => `• ${e.noTime ? "" : fmtT(e.t) + " — "}${e.x}`).join("\n")).join("\n\n");
           copyText(txt); toast("Copied — paste into your stand-up / review");
         };
       },
