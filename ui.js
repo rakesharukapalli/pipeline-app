@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v42";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v43";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -247,6 +247,34 @@
     const txt = await res.text(); let j; try { j = JSON.parse(txt); } catch (e) { throw new Error("Unexpected AI response"); }
     if (j.error) throw new Error(j.error);
     return String(j.text || j.result || "").trim();
+  }
+  // Shared "suggest next move" runner: fills outEl with the AI answer + a small Copy button.
+  async function aiMove(btn, outEl, system, userCtx) {
+    if (!btn || !outEl) return;
+    const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Thinking…";
+    try {
+      const text = await aiAsk([{ role: "system", content: system }, { role: "user", content: userCtx }]);
+      outEl.innerHTML = `<div class="card" style="white-space:pre-wrap;margin:10px 0">${mdLite(text)}<div style="margin-top:9px"><button class="btn aimovecopy" style="padding:4px 10px;font-size:11px">${I.copy} Copy</button></div></div>`;
+      const cp = outEl.querySelector(".aimovecopy"); if (cp) cp.onclick = () => { copyText(text); toast("Copied"); };
+    } catch (e) { toast("AI: " + (e.message || e), "warn"); }
+    btn.disabled = false; btn.innerHTML = old;
+  }
+  const DEAL_MOVE_SYS = "You are a B2B IT staffing & GCC (Global Capability Centre) sales advisor (InitiateFirst, India). You are given ONE deal. Recommend the single best NEXT MOVE. Output exactly: (1) one line reading where the deal stands; (2) a line 'Next move:' then 2–4 concrete, prioritised actions specific to THIS account — reference the blocker, timeline, candidates and collateral where relevant; (3) if useful, name ONE collateral file to send and include its link. Use ONLY the data given; never invent accounts, people, files or numbers. Be concrete and brief (~130 words). Plain text + simple bullets.";
+  const CAND_MOVE_SYS = "You are a recruitment-delivery advisor for an India IT staffing firm (InitiateFirst). You are given ONE candidate in a hiring process. Recommend the best NEXT MOVE to progress them. Output: (1) one line on where this candidate stands; (2) a line 'Next move:' with 2–3 concrete actions (e.g. chase interview feedback, schedule the next round, prep the candidate, manage notice/offer, keep the client's SPOC warm) specific to this candidate's status and dates. Use ONLY the data given; don't invent. Brief (~110 words), plain text + simple bullets.";
+  // "Read inside files": ask the backend to extract text from every linked Drive file into a Content column.
+  async function indexFiles(btn) {
+    if (B.demo) return toast("Indexing runs against your real Google Sheet (not demo).", "warn");
+    if (!B.rpc) return toast("Needs the Google Sheets backend", "warn");
+    const old = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Reading files… (up to a minute)";
+    try {
+      const r = await B.rpc("index_library", { onlyMissing: false });
+      if (r && r.error) throw new Error(r.error);
+      await Store.refresh(true);
+      const parts = [`✅ Read ${r.processed || 0} file(s)`]; if (r.skipped) parts.push(`${r.skipped} skipped (no link)`); if (r.failed && r.failed.length) parts.push(`${r.failed.length} couldn't be read`);
+      toast(parts.join(" · "));
+      if (r.failed && r.failed.length) console.warn("Index failures:", r.failed);
+      render();
+    } catch (e) { toast("Indexing failed: " + (e.message || e), "warn"); btn.disabled = false; btn.innerHTML = old; }
   }
 
   const I = {
@@ -664,6 +692,7 @@
         <div><div style="font-size:12px;color:var(--ink-3)">NEXT STEP</div><div style="font-weight:650;margin-top:2px">${esc(r["Next Step"] || "No next step set")}</div>
         <div style="margin-top:6px">${followChip(x.follow, r["Next Step Date"])} ${r.Blocker ? `<span class="chip">Blocker: ${esc(r.Blocker)}</span>` : ""}</div></div>
         <button class="btn" data-act="snooze" data-id="${esc(r["Deal ID"])}">Reschedule</button></div></div>
+      ${aiOn() ? `<button class="btn pri block" id="aimove" style="margin-bottom:10px">✨ Suggest next move</button><div id="aimoveout"></div>` : ""}
       <div class="card"><div style="font-size:12px;color:var(--ink-3);margin-bottom:6px">STAGE</div>
         <div class="stepper">${stages.map((s, i) => `<button data-act="stage" data-id="${esc(r["Deal ID"])}" data-v="${esc(s)}" class="${s === r.Stage ? "on" : i < si && si < 9 ? "done" : ""}">${esc(s)}</button>`).join("")}</div>
         <div style="font-size:12px;color:var(--ink-3);margin:8px 0 6px">TEMPERATURE</div>
@@ -699,6 +728,7 @@
         const on = $(".stepper .on", el); if (on) on.parentElement.scrollLeft = on.offsetLeft - 20;
         const g = $('.chips[data-name="temp"]', el);
         g.addEventListener("pick", (e) => { if (e.detail) { API.update("pipeline", r, { Temperature: e.detail }); toast("Temperature: " + e.detail); } });
+        const am = $("#aimove", el); if (am) am.onclick = () => aiMove(am, $("#aimoveout", el), DEAL_MOVE_SYS, dealMoveCtx(r));
       },
     };
   };
@@ -1327,11 +1357,14 @@
   function libCardHtml(i) {
     const link = i.Link || "";
     const meta = `<div class="libmeta">${i.Category ? `<span class="chip stage">${esc(i.Category)}</span>` : ""}${i.Type ? `<span class="chip">${esc(i.Type)}</span>` : ""}${i.Updated ? `<span class="hint">Updated ${esc(D.fmt(i.Updated, { abs: 1 }))}</span>` : ""}</div>`;
-    const inner = `<div class="libmain"><div class="libtitle">${esc(i.Title || "Untitled")}</div>${(i.Category || i.Type || i.Updated) ? meta : ""}</div><span class="libarrow">${link ? I.out : I.copy}</span>`;
+    const indexed = !!String(i.Content || "").trim();
+    const inner = `<div class="libmain"><div class="libtitle">${esc(i.Title || "Untitled")}${indexed ? ' <span class="chip ok" style="font-size:9.5px;padding:1px 6px">AI-read</span>' : ""}</div>${(i.Category || i.Type || i.Updated) ? meta : ""}</div><span class="libarrow">${link ? I.out : I.copy}</span>`;
     // A document link → the whole row opens it. A text template → the row opens the viewer (with Copy).
-    return link
-      ? `<a class="librow" href="${esc(link)}" target="_blank" rel="noopener">${inner}</a>`
-      : `<button class="librow" data-act="libview" data-sig='${esc(i._sig)}'>${inner}</button>`;
+    const main = link
+      ? `<a class="librow" href="${esc(link)}" target="_blank" rel="noopener" style="flex:1;min-width:0">${inner}</a>`
+      : `<button class="librow" data-act="libview" data-sig='${esc(i._sig)}' style="flex:1;min-width:0">${inner}</button>`;
+    const ask = aiOn() ? `<button class="btn libask" data-act="libask" data-sig='${esc(i._sig)}' title="Ask AI about this file" style="flex:none;padding:0 13px;font-size:16px">✨</button>` : "";
+    return `<div class="librowwrap" style="display:flex;gap:6px;align-items:stretch;margin-bottom:8px">${main}${ask}</div>`;
   }
   function libFilter() {
     const q = libState.q.toLowerCase();
@@ -1339,10 +1372,33 @@
       (!q || [i.Title, i.Category, i.Tags, i.Body, i.Type, i.Owner].join(" ").toLowerCase().includes(q)));
   }
   function libViewSheet(i) {
+    const hasContent = !!String(i.Content || "").trim();
     sheet(i.Title || "Item", `${i.Category || i.Type ? `<div style="margin-bottom:8px">${i.Category ? `<span class="chip stage">${esc(i.Category)}</span> ` : ""}${i.Type ? `<span class="chip">${esc(i.Type)}</span>` : ""}</div>` : ""}
-      <div class="card" style="white-space:pre-wrap">${esc(i.Body || "")}</div>
+      ${i.Body ? `<div class="card" style="white-space:pre-wrap">${esc(i.Body)}</div>` : ""}
       ${i.Link ? `<a class="btn block" href="${esc(i.Link)}" target="_blank" rel="noopener">Open attachment</a>` : ""}
-      <button class="btn pri block" id="lc">Copy text</button>`, (el) => { $("#lc", el).onclick = () => { copyText(i.Body || ""); toast("Copied"); }; });
+      ${aiOn() ? `<button class="btn pri block" id="lask" style="margin-top:8px">✨ Ask AI about this file</button>${hasContent ? "" : `<div class="hint" style="margin-top:6px">Tip: this file isn't indexed yet — run <b>Index files for AI</b> on the Library screen so the AI can read inside it.</div>`}` : ""}
+      ${i.Body ? `<button class="btn block" id="lc" style="margin-top:8px">${I.copy} Copy text</button>` : ""}`, (el) => {
+      const lc = $("#lc", el); if (lc) lc.onclick = () => { copyText(i.Body || ""); toast("Copied"); };
+      const la = $("#lask", el); if (la) la.onclick = () => libAskSheet(i);
+    });
+  }
+  // Ask a free-form question about ONE file, using its extracted Content (full text).
+  function libAskSheet(i) {
+    const content = String(i.Content || "").trim();
+    const src = content || String(i.Body || "").trim();
+    sheet("Ask · " + (i.Title || "file"), `
+      ${src ? "" : `<div class="card"><b>This file hasn't been read yet.</b><p class="hint">Go to Library → <b>Index files for AI</b> to let the AI read inside it, then come back.</p></div>`}
+      <textarea id="lfq" rows="3" placeholder="e.g. 'What bill rates are quoted?' or 'Summarise this deck in 5 bullets'" style="width:100%;border:1px solid var(--b);border-radius:10px;padding:10px;font:inherit;font-size:14px;box-sizing:border-box" ${src ? "" : "disabled"}></textarea>
+      <button class="btn pri block" id="lfsend" style="margin-top:8px" ${src ? "" : "disabled"}>${I.out} Ask</button>
+      <div id="lfout"></div>`, (el) => {
+      const box = $("#lfq", el), send = $("#lfsend", el);
+      if (send) send.onclick = () => {
+        const q = (box.value || "").trim(); if (!q) return;
+        const ctx = `FILE: ${i.Title || "(untitled)"}${i.Type ? " (" + i.Type + ")" : ""}\n\nFILE CONTENT (text read from inside the file):\n${src.slice(0, 11000)}\n\nQUESTION: ${q}`;
+        aiMove(send, $("#lfout", el), "You answer questions about ONE sales/collateral file for an India IT staffing & GCC firm (InitiateFirst), using ONLY the file content provided. Quote figures and lines exactly as written. If the answer isn't in the file, say so plainly — do not guess. Be concise.", ctx);
+      };
+      if (box) box.focus();
+    });
   }
   V.library = () => {
     const items = libItems();
@@ -1354,11 +1410,13 @@
         <p class="hint">Add a <b>Library</b> tab to your sheet (header row 1) with columns: <b>Category, Title, Type, Body, Link, Tags, Owner, Updated</b>.</p>
         <p class="hint">Put email templates & pitches in <b>Body</b> (shown with a Copy button). Put decks/PDFs in Google Drive or SharePoint and paste the share link in <b>Link</b> (shown with an Open button). Then add <code>library</code> to Code.gs and redeploy.</p></div>` : `
       <div class="toolbar"><input class="search" id="lq" placeholder="Search pitches, templates, decks..." value="${esc(libState.q)}"></div>
+      ${aiOn() ? `<div class="card" style="padding:10px;margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:12.5px"><b>Let AI read inside your files</b><div class="hint">Reads the text in your linked decks/PDFs so Ask AI can answer from them.</div></div><button class="btn pri" id="libindex" style="flex:none;white-space:nowrap">${I.search} Index files</button></div></div>` : ""}
       <div class="seg" id="lcat" style="margin-bottom:8px;flex-wrap:wrap"><button data-v="" class="${libState.cat === "" ? "on" : ""}">All</button>${cats.map((c) => `<button data-v="${esc(c)}" class="${libState.cat === c ? "on" : ""}">${esc(c)}</button>`).join("")}</div>
       <div id="lbody">${render_()}</div>`,
       mount: (el) => {
         const q = $("#lq", el); if (q) q.addEventListener("input", (e) => { libState.q = e.target.value; $("#lbody", el).innerHTML = render_(); });
         const lc = $("#lcat", el); if (lc) lc.onclick = (e) => { const b = e.target.closest("button"); if (b) { libState.cat = b.dataset.v; render(); } };
+        const li = $("#libindex", el); if (li) li.onclick = () => indexFiles(li);
       },
     };
   };
@@ -1565,15 +1623,60 @@
     // ---- COLLATERAL LIBRARY (pitch decks, presentations, templates) — titles/tags/links only
     const libs = live("library");
     if (libs.length) {
+      const anyContent = libs.some((l) => String(l.Content || "").trim());
       L2.push("");
-      L2.push(`COLLATERAL LIBRARY (${libs.length} files — decks, presentations, templates. You can recommend which file to use and give its link, but you CANNOT read inside the linked files):`);
-      L2.push(libs.slice(0, 35).map((l) => [l.Title || l.Category || "?", l.Type || l.Category, l.Tags ? "tags: " + l.Tags : "", l.Body ? "— " + String(l.Body).slice(0, 140) : "", l.Link ? "link: " + l.Link : ""].filter(Boolean).join(" | ")).join("\n"));
+      L2.push(`COLLATERAL LIBRARY (${libs.length} files — decks, presentations, templates). Each shows title/type/tags/link. Where CONTENT is shown, that is real text read from inside the file — you MAY quote and summarise it. Where no CONTENT is shown, do NOT guess what's inside the file.${anyContent ? "" : " (No files indexed yet — recommend by title/tags and give the link.)"}`);
+      L2.push(libs.slice(0, 30).map((l) => {
+        const head = [l.Title || l.Category || "?", l.Type || l.Category, l.Tags ? "tags: " + l.Tags : "", l.Link ? "link: " + l.Link : ""].filter(Boolean).join(" | ");
+        const body = String(l.Content || l.Body || "").trim();
+        return head + (body ? "\n   CONTENT: " + body.replace(/\s+/g, " ").slice(0, 500) : "");
+      }).join("\n"));
     }
     L2.push("");
     L2.push(`ACTIVITY last 14 days: ${recent.length} logged touches${chStr ? " (" + chStr + ")" : ""}.`);
     return L2.join("\n");
   }
-  const AI_PERSONA = "You are an expert sales-operations advisor built into the pipeline app of a B2B IT staffing and GCC (Global Capability Centre) sales leader in India (company: InitiateFirst). You are given a LIVE SNAPSHOT covering THREE things: (A) the SALES pipeline (deals, funnel, leads, commitments), (B) the DELIVERY pipeline (candidates and open requirements), and (C) a COLLATERAL LIBRARY of sales files (pitch decks, presentations, templates) listed by title, type, tags and link. Rules: (1) Use ONLY the snapshot data — never invent accounts, candidates, files, numbers or facts not present. (2) Be specific — name the actual accounts/candidates/files and cite the real numbers. (3) Give practical, prioritised, action-oriented advice; prefer a short ranked list with a one-line 'why' each. (4) For the collateral library you may recommend the best file and give its link, but you CANNOT read the contents inside the linked files, so never quote or summarise their internal slides/pages — only use the title, type, tags and description shown. (5) If the data lacks what's needed, say so in one line. (6) Keep it focused (~220 words) unless asked for more. Use plain text with simple bullets.";
+  // Per-deal context for the "Suggest next move" button.
+  function dealMoveCtx(r) {
+    const x = deal(r);
+    const eqA = (b) => String(b || "").trim().toLowerCase() === String(r.Account || "").trim().toLowerCase();
+    const acts = live("activity").filter((a) => a["Deal ID"] === r["Deal ID"] || (!a["Deal ID"] && eqA(a.Account) && a.Contact === r.Contact)).sort((a, b) => (b.Date || 0) - (a.Date || 0));
+    const cands = live("delivery").filter((c) => eqA(c.Client));
+    const reqs = live("deliveryReqs").filter((q) => eqA(q.Client));
+    const libs = live("library").slice(0, 14).map((l) => `${l.Title || l.Category || "?"}${l.Type ? " [" + l.Type + "]" : ""}${l.Tags ? " (" + l.Tags + ")" : ""}${l.Link ? " " + l.Link : ""}`);
+    const lines = [
+      `DEAL: ${r.Account} — ${r.Contact || ""}${r.Designation ? " (" + r.Designation + ")" : ""}${r.City ? ", " + r.City : ""}`,
+      `Stage: ${r.Stage} | Temp: ${r.Temperature || "?"} | Service: ${r["Service Line"] || "?"} | Qualified: ${r["Qualified?"] === "Y" ? "Yes" : "No"}`,
+      `Est HC: ${r["Est. Headcount"] || "?"} | Est billing: ${fmtL(r["Est. Monthly Billing (INR)"]) || "?"}/mo | Source: ${r.Source || "?"}`,
+      `Follow-up: ${x.follow}${isNum(r["Next Step Date"]) ? " (" + D.fmt(r["Next Step Date"], { abs: 1 }) + ")" : ""} | Last contact: ${x.days != null ? x.days + "d ago" : "never"}`,
+      `Current next step: ${r["Next Step"] || "(none set)"}`,
+      r.Blocker ? `BLOCKER: ${r.Blocker}` : "",
+      `Notes: ${String(r.Notes || "").slice(0, 500) || "(none)"}`,
+      "", "TIMELINE (recent first):",
+      acts.slice(0, 8).map((a) => `- ${isNum(a.Date) ? D.fmt(a.Date, { abs: 1 }) : "?"}: ${a.Channel || "Touch"} / ${a.Outcome || ""}${a.Notes ? " — " + a.Notes : ""}${a["Next Step"] ? " (next: " + a["Next Step"] + ")" : ""}`).join("\n") || "(no logged touches)",
+    ];
+    if (reqs.length) lines.push("", `OPEN REQUIREMENTS for ${r.Account}: ` + reqs.map((q) => `${q.Role || "?"}${q.Status ? " (" + q.Status + ")" : ""}`).join("; "));
+    if (cands.length) lines.push("", `CANDIDATES in play for ${r.Account}: ` + cands.slice(0, 12).map((c) => `${c.Candidate || c.Name || "?"} [${c.Role || "?"}] ${c.Status || ""}`).join("; "));
+    lines.push("", "COLLATERAL AVAILABLE (suggest one & give its link if useful; do NOT quote inside files):", libs.join("\n") || "(none)");
+    return lines.filter((l) => l !== undefined).join("\n");
+  }
+  // Per-candidate context for the delivery "Suggest next move" button.
+  function candMoveCtx(c) {
+    const sameReq = live("delivery").filter((o) => o["Req ID"] && o["Req ID"] === c["Req ID"] && o !== c);
+    const req = live("deliveryReqs").find((q) => q["Req ID"] === c["Req ID"]);
+    const lines = [
+      `CANDIDATE: ${c.Candidate || c.Name || "?"} for ${c.Role || "?"} @ ${c.Client || "?"}`,
+      `Status: ${c.Status || "?"} | Submitted: ${isNum(c.Submitted) ? D.fmt(c.Submitted, { abs: 1 }) : "?"} | Last f/u: ${isNum(c["Last Follow-up"]) ? D.fmt(c["Last Follow-up"], { abs: 1 }) : "?"} | Next f/u: ${isNum(c["Next Follow-up"]) ? D.fmt(c["Next Follow-up"], { abs: 1 }) : "(none)"}`,
+      `Interview: ${isNum(c["Interview Date"]) ? D.fmt(c["Interview Date"], { abs: 1 }) + (c["Interview Time"] ? " " + c["Interview Time"] : "") : "(none scheduled)"}`,
+      `Exp: ${c["Experience (yrs)"] || "?"}y${c["Relevant Exp"] ? " (rel " + c["Relevant Exp"] + ")" : ""} | Notice: ${c["Notice Period"] || "?"} | CCTC: ${c["Current CTC (LPA)"] || "?"} | ECTC: ${c["Expected CTC (LPA)"] || "?"}`,
+      `Location: ${c["Current Location"] || "?"}${c["Preferred Location"] ? " → " + c["Preferred Location"] : ""} | Availability: ${c["Interview Availability"] || "?"} | SPOC: ${c.SPOC || "?"}`,
+      `Notes: ${String(c.Notes || "").slice(0, 400) || "(none)"}`,
+    ];
+    if (req) lines.push(`Requirement: ${req.Role || "?"} · ${req.Status || ""}${req.Priority ? " · " + req.Priority : ""}${req.Budget ? " · budget " + req.Budget : ""}`);
+    if (sameReq.length) lines.push(`Other candidates on same req: ` + sameReq.slice(0, 8).map((o) => `${o.Candidate || o.Name} (${o.Status || ""})`).join("; "));
+    return lines.join("\n");
+  }
+  const AI_PERSONA = "You are an expert sales-operations advisor built into the pipeline app of a B2B IT staffing and GCC (Global Capability Centre) sales leader in India (company: InitiateFirst). You are given a LIVE SNAPSHOT covering THREE things: (A) the SALES pipeline (deals, funnel, leads, commitments), (B) the DELIVERY pipeline (candidates and open requirements), and (C) a COLLATERAL LIBRARY of sales files (pitch decks, presentations, templates) listed by title, type, tags and link. Rules: (1) Use ONLY the snapshot data — never invent accounts, candidates, files, numbers or facts not present. (2) Be specific — name the actual accounts/candidates/files and cite the real numbers. (3) Give practical, prioritised, action-oriented advice; prefer a short ranked list with a one-line 'why' each. (4) For the collateral library you may recommend the best file and give its link. Some files include CONTENT (real text read from inside the file) — when CONTENT is shown you MAY quote and summarise it; when only title/type/tags/link are shown, do NOT guess or invent what is inside that file. (5) If the data lacks what's needed, say so in one line. (6) Keep it focused (~220 words) unless asked for more. Use plain text with simple bullets.";
   const ASK_PRESETS = [
     ["📊 Analyse my funnel", "Analyse my current sales funnel. Where are deals concentrated, where is the likely drop-off, and what does the shape tell me? Name the accounts in each key stage."],
     ["⚠️ What's at risk?", "Which of my open deals are most at risk of slipping or going cold, and why? Give me a prioritised list with the single best next action for each."],
@@ -1714,6 +1817,7 @@
         case "ctouch": { const c = bySig("contacts", sig); return c && contactTouch(c); }
         case "libcopy": e.stopPropagation(); { const i = bySig("library", sig); if (i && i.Body) { copyText(i.Body); toast("Copied · " + (i.Title || "")); } return; }
         case "libview": { const i = bySig("library", sig); return i && libViewSheet(i); }
+        case "libask": e.stopPropagation(); { const i = bySig("library", sig); return i && libAskSheet(i); }
         case "revcopy": e.stopPropagation(); copyText(reviewSummaryText); return toast("Review summary copied");
         case "dcand": { const c = bySig("delivery", sig); return c && dCandForm(c); }
         case "dlog": e.stopPropagation(); { const c = bySig("delivery", sig); return c && dLog(c); }
@@ -2056,9 +2160,11 @@
       ${field("Note (feedback / next step)", "notes", "", "textarea")}
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
       <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal" checked></div>
+      ${aiOn() ? `<button class="btn block" id="cmove" style="margin-bottom:8px">✨ Suggest next move</button><div id="cmoveout"></div>` : ""}
       <button class="btn pri block" id="save">Save</button>`, (el, close) => {
       wireDateChips(el);
       $('.chips[data-name="stg"]', el).addEventListener("pick", (e) => { if (e.detail) $('[name="status"]', el).value = e.detail; });
+      const cm = $("#cmove", el); if (cm) cm.onclick = () => aiMove(cm, $("#cmoveout", el), CAND_MOVE_SYS, candMoveCtx(c));
       $("#save", el).onclick = () => {
         const f = form(el), t = today();
         const line = f.notes ? `${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" })}: ${f.notes}` : "";
