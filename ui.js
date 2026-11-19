@@ -4,6 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
+  const VERSION = "v39";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -25,7 +26,8 @@
   const TABLE_LABEL = { pipeline: "Deal", leads: "Lead", commitments: "Commitment", meetings: "Meeting", deliveryReqs: "Requirement", requirements: "Requirement", proposals: "Proposal", contacts: "Contact", accounts: "Client", intel: "Market intel", contracts: "Contract", events: "Event", targets: "Target", library: "Library" };
   const recName = (r) => r.Account || r.Name || r.SPOC || r.Commitment || r.Role || r["Role / Skill"] || r.Contact || r.Client || r.Title || r["Event / Referral"] || r["Deal ID"] || "";
   const DATE_FLD = /(date|follow[- ]?up|received|submitted|signed|deployed|qualified|due|start|last contact)/i;
-  const fmtActV = (h, v) => { if (v === "" || v == null) return ""; if (typeof v === "number" && DATE_FLD.test(h) && v > 20000 && v < 90000) return D.fmt(v, { abs: 1 }); return String(v).slice(0, 60); };
+  const NOTE_FLD = /(note|comment|remark|feedback)/i;
+  const fmtActV = (h, v) => { if (v === "" || v == null) return ""; if (typeof v === "number" && DATE_FLD.test(h) && v > 20000 && v < 90000) return D.fmt(v, { abs: 1 }); return String(v).slice(0, NOTE_FLD.test(h) ? 240 : 60); };
   const ADD_DESC = {
     activity: (v) => `${v.Channel || "Touch"} · ${v.Outcome || ""} — ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}${v["Next Step"] ? " · next: " + v["Next Step"] : ""}${isNum(v["Next Step Date"]) ? " · f/u " + D.fmt(v["Next Step Date"], { abs: 1 }) : ""}`,
     pipeline: (v) => `New deal · ${v.Account || ""}${v.Contact ? " (" + v.Contact + ")" : ""}`,
@@ -1404,6 +1406,34 @@
     const days = Object.keys(byDay).sort().reverse().map((k) => ({ d: new Date(k + "T00:00:00"), e: byDay[k].entries.sort((a, b) => a.t - b.t) }));
     let total = 0; days.forEach((dd) => (total += dd.e.length));
     const rangeText = dayLogMode === "today" || dayLogMode === "yesterday" ? dayLabel(start) : `${dayLabel(start)} – ${dayLabel(end)}`;
+    const modeLabel = DAY_MODES.find((m) => m[0] === dayLogMode)[1];
+    // ---- consolidated summary (leadership-ready), built from this period's touches + notes
+    const acts = live("activity").filter((a) => isNum(a.Date) && a.Date >= sSer && a.Date <= eSer);
+    const localTexts = []; Object.keys(log).forEach((k) => { if (k >= startKey && k <= endKey) (log[k] || []).forEach((e) => localTexts.push(e.x)); });
+    const sumLines = [], sumNotes = [];
+    { const ch = {}; let resp = 0, mtg = 0; const accs = new Set();
+      acts.forEach((a) => { const c = a.Channel || "Other"; ch[c] = (ch[c] || 0) + 1; const oc = String(a.Outcome || ""); if (oc && !/no answer|call busy/i.test(oc)) resp++; if (/meeting/i.test(oc)) mtg++; if (a.Account) accs.add(a.Account); if (a.Notes && String(a.Notes).trim()) sumNotes.push(`${a.Account ? a.Account + " — " : ""}${String(a.Notes).trim()}`); });
+      localTexts.forEach((x) => { const m = x.match(/(?:Comments?|Notes?):\s*(.+)$/i); if (m) sumNotes.push(`${x.split(" · ")[0]} — ${m[1]}`); });
+      const cnt = (re) => localTexts.filter((x) => re.test(x)).length;
+      const newDeals = cnt(/^New deal/), newLeads = cnt(/^New lead/), newMeet = cnt(/^Meeting booked/), commits = cnt(/^New commitment/), props = cnt(/^New proposal/);
+      const stageMoves = localTexts.filter((x) => /stage →|· Stage:/.test(x)).length;
+      const chStr = Object.keys(ch).sort((a, b) => ch[b] - ch[a]).map((c) => `${ch[c]}× ${c}`).join(", ");
+      if (acts.length) sumLines.push(`${acts.length} follow-up${acts.length > 1 ? "s" : ""} across ${accs.size} account${accs.size !== 1 ? "s" : ""}${chStr ? " (" + chStr + ")" : ""}${resp ? `, ${resp} with a response` : ""}.`);
+      const adv = [];
+      if (stageMoves) adv.push(`${stageMoves} stage move${stageMoves > 1 ? "s" : ""}`);
+      if (mtg + newMeet) adv.push(`${mtg + newMeet} meeting${mtg + newMeet > 1 ? "s" : ""}`);
+      if (newDeals) adv.push(`${newDeals} new opportunit${newDeals > 1 ? "ies" : "y"}`);
+      if (newLeads) adv.push(`${newLeads} new lead${newLeads > 1 ? "s" : ""}`);
+      if (props) adv.push(`${props} proposal${props > 1 ? "s" : ""}`);
+      if (commits) adv.push(`${commits} commitment${commits > 1 ? "s" : ""}`);
+      if (adv.length) sumLines.push(adv.join(" · ") + ".");
+    }
+    const notesTop = sumNotes.slice(0, 10);
+    const summaryCard = total ? `<div class="sec"><h2>Summary — ${esc(modeLabel)}</h2></div>
+      <div class="card">${sumLines.map((l) => `<div style="margin-bottom:6px">${esc(l)}</div>`).join("") || '<div class="hint">Activity recorded — see the list below.</div>'}
+      ${notesTop.length ? `<div style="font-size:12px;color:var(--ink-3);margin:8px 0 4px">Key notes / comments</div><ul style="margin:0 0 0 18px;font-size:13px;padding:0">${notesTop.map((n) => `<li style="margin-bottom:3px">${esc(n)}</li>`).join("")}</ul>` : ""}
+      <button class="btn block" id="copysum" style="margin-top:10px">${I.copy} Copy summary for leadership</button></div>` : "";
+    const summaryText = () => `${modeLabel} · ${rangeText}\n` + (sumLines.length ? sumLines.map((l) => "• " + l).join("\n") : "• Activity recorded.") + (notesTop.length ? "\n\nKey notes:\n" + notesTop.map((n) => "- " + n).join("\n") : "");
     const dayBlock = (dd) => `<div class="sec"><h2>${esc(dayLabel(dd.d))}</h2><span class="count">${dd.e.length}</span></div>
       <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${e.noTime ? "" : fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
     const body = days.length ? days.map(dayBlock).join("")
@@ -1412,10 +1442,13 @@
       title: "My activity", back: true, html: `
       <div class="seg" id="dayseg" style="margin-bottom:10px;flex-wrap:wrap">${DAY_MODES.map(([v, l]) => `<button data-o="${v}" class="${dayLogMode === v ? "on" : ""}">${l}</button>`).join("")}</div>
       <div class="hint" style="margin:0 4px 6px">${esc(rangeText)} · <b>${total}</b> action(s)</div>
+      ${summaryCard}
+      <div class="sec"><h2>Detail</h2></div>
       ${body}
-      ${total ? `<button class="btn pri block" id="copyday" style="margin-top:10px">${I.copy} Copy for stand-up / review</button>` : ""}`,
+      ${total ? `<button class="btn pri block" id="copyday" style="margin-top:10px">${I.copy} Copy full detail</button>` : ""}`,
       mount: (el) => {
         $("#dayseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { dayLogMode = b.dataset.o; render(); } };
+        const cs = $("#copysum", el); if (cs) cs.onclick = () => { copyText(summaryText()); toast("Summary copied — ready for leadership"); };
         const cp = $("#copyday", el); if (cp) cp.onclick = () => {
           const head = `${DAY_MODES.find((m) => m[0] === dayLogMode)[1]} · ${rangeText} (${total} actions)`;
           const txt = head + "\n\n" + days.map((dd) => dayLabel(dd.d) + "\n" + dd.e.map((e) => `• ${e.noTime ? "" : fmtT(e.t) + " — "}${e.x}`).join("\n")).join("\n\n");
@@ -1425,7 +1458,7 @@
     };
   };
   V.more = () => {
-    const tiles = [["#/daylog", I.today, "My activity", "Daily / weekly / monthly / quarterly"], ["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/daylog", I.today, "My activity", "Daily / weekly / monthly / quarterly"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/datacheck", I.search, "Data check", "Missing contacts & duplicate IDs"], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
@@ -1438,7 +1471,7 @@
     return { title: "Sync & settings", back: true, html: `
       <div class="card"><div class="kv"><div>Signed in</div><div>${esc(B.userName())}</div><div>Status</div><div>${esc(st)}${S.error ? `<div class="hint" style="color:var(--bad)">${esc(S.error)}</div>` : ""}</div>
       <div>Waiting to sync</div><div>${S.queue.length} change(s)</div><div>Last loaded</div><div>${S.loadedAt ? new Date(S.loadedAt).toLocaleString("en-GB") : "-"}</div>
-      <div>Last edited by</div><div>${esc(S.lastWriteBy || "-")}</div></div>
+      <div>Last edited by</div><div>${esc(S.lastWriteBy || "-")}</div><div>App version</div><div><b>${VERSION}</b></div></div>
       <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="pri" data-act="syncnow">Sync now</button><button data-act="testconn">Test sheet connection</button>${S.queue.length ? '<button class="danger" data-act="dropq">Discard queued changes</button>' : ""}</div></div>
       <div class="card"><b>Theme</b><div style="margin-top:8px">${chips("theme", [["", "Auto"], ["light", "Light"], ["dark", "Dark"]], localStorage.getItem("pp.theme") || "")}</div></div>
       <div class="card"><b>Install on your phone</b><div class="hint" style="margin-top:6px">${isIOS ? "Safari: tap Share → Add to Home Screen." : "Chrome: menu ⋮ → Install app (or Add to Home screen)."}</div>${installEvt ? '<button class="btn pri" data-act="install" style="margin-top:8px">Install now</button>' : ""}</div>
