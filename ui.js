@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v43";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v44";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -69,10 +69,16 @@
     return "₹" + (n / 1e5).toFixed(n >= 1e6 ? 0 : 1).replace(/\.0$/, "") + "L";
   }
   const pct = (v) => (isNum(v) ? (v * 100).toFixed(1).replace(/\.0$/, "") + "%" : "");
-  // tiny markdown: escape, then **bold**, `code`, and leading "- "/"* " bullets (kept readable with pre-wrap)
+  // tiny markdown: escape, then links, **bold**, `code`, and leading "- "/"* " bullets (kept readable with pre-wrap)
   function mdLite(s) {
     let h = esc(s);
-    h = h.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|\n)\s*[-*]\s+/g, "$1• ").replace(/`([^`]+)`/g, "<code>$1</code>");
+    h = h.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      // [label](url) → clickable label
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      // bare URL → clickable (skip ones already inside an anchor we just made)
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)(?![^<]*<\/a>)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+      .replace(/(^|\n)\s*[-*]\s+/g, "$1• ");
     return h;
   }
   function phones(p) { return String(p || "").split(/[\/,;]| or /).map((x) => x.replace(/[^\d+]/g, "")).filter((x) => x.replace(/\D/g, "").length >= 8); }
@@ -259,7 +265,7 @@
     } catch (e) { toast("AI: " + (e.message || e), "warn"); }
     btn.disabled = false; btn.innerHTML = old;
   }
-  const DEAL_MOVE_SYS = "You are a B2B IT staffing & GCC (Global Capability Centre) sales advisor (InitiateFirst, India). You are given ONE deal. Recommend the single best NEXT MOVE. Output exactly: (1) one line reading where the deal stands; (2) a line 'Next move:' then 2–4 concrete, prioritised actions specific to THIS account — reference the blocker, timeline, candidates and collateral where relevant; (3) if useful, name ONE collateral file to send and include its link. Use ONLY the data given; never invent accounts, people, files or numbers. Be concrete and brief (~130 words). Plain text + simple bullets.";
+  const DEAL_MOVE_SYS = "You are a B2B IT staffing & GCC (Global Capability Centre) sales advisor (InitiateFirst, India). You are given ONE deal. Recommend the single best NEXT MOVE. Output exactly: (1) one line reading where the deal stands; (2) a line 'Next move:' then 2–4 concrete, prioritised actions specific to THIS account — reference the blocker, timeline, candidates and collateral where relevant; (3) if useful, name ONE collateral file to send and write it as a clickable markdown link in the form [File name](link) using its exact link from the data. Use ONLY the data given; never invent accounts, people, files or numbers. Be concrete and brief (~130 words). Plain text + simple bullets.";
   const CAND_MOVE_SYS = "You are a recruitment-delivery advisor for an India IT staffing firm (InitiateFirst). You are given ONE candidate in a hiring process. Recommend the best NEXT MOVE to progress them. Output: (1) one line on where this candidate stands; (2) a line 'Next move:' with 2–3 concrete actions (e.g. chase interview feedback, schedule the next round, prep the candidate, manage notice/offer, keep the client's SPOC warm) specific to this candidate's status and dates. Use ONLY the data given; don't invent. Brief (~110 words), plain text + simple bullets.";
   // "Read inside files": ask the backend to extract text from every linked Drive file into a Content column.
   async function indexFiles(btn) {
@@ -270,11 +276,24 @@
       const r = await B.rpc("index_library", { onlyMissing: false });
       if (r && r.error) throw new Error(r.error);
       await Store.refresh(true);
-      const parts = [`✅ Read ${r.processed || 0} file(s)`]; if (r.skipped) parts.push(`${r.skipped} skipped (no link)`); if (r.failed && r.failed.length) parts.push(`${r.failed.length} couldn't be read`);
-      toast(parts.join(" · "));
-      if (r.failed && r.failed.length) console.warn("Index failures:", r.failed);
+      const fails = r.failed || [];
+      if (!r.processed && fails.length) {
+        sheet("Couldn't read the files", `<div class="card"><b>None of the files could be read.</b><p class="hint" style="margin-top:6px">Common fixes:</p>
+          <ul style="margin:4px 0 0 18px;font-size:13px"><li>Add <b>library-index.gs</b> and <b>redeploy</b> (Deploy → Manage → edit → New version).</li><li>Each file must be in your Google Drive, or shared with the Google account that runs the app.</li><li>The Library <b>Link</b> column must hold the file's share link (not a folder).</li></ul></div>
+          <div style="font-size:12px;color:var(--ink-3);margin:2px 4px">What the server reported:</div>
+          <div class="card" style="white-space:pre-wrap;font-size:11.5px">${esc(fails.join("\n\n"))}</div>`, () => {});
+      } else {
+        const parts = [`✅ Read ${r.processed || 0} file(s)`]; if (r.skipped) parts.push(`${r.skipped} without a link`); if (fails.length) parts.push(`${fails.length} failed`);
+        toast(parts.join(" · "));
+        if (fails.length) sheet("Some files couldn't be read", `<div class="card" style="white-space:pre-wrap;font-size:11.5px">${esc(fails.join("\n\n"))}</div>`, () => {});
+      }
       render();
-    } catch (e) { toast("Indexing failed: " + (e.message || e), "warn"); btn.disabled = false; btn.innerHTML = old; }
+    } catch (e) {
+      const m = String(e.message || e);
+      if (/unknown action/i.test(m)) sheet("Update needed", `<div class="card"><b>Your Google Sheet script needs updating.</b><p class="hint" style="margin-top:6px">The "Index files" feature isn't in your backend yet. Paste the updated <b>Code.gs</b>, add the new <b>library-index.gs</b> file, then redeploy (New version). Full steps are in the chat.</p></div>`, () => {});
+      else toast("Indexing failed: " + m, "warn");
+    }
+    btn.disabled = false; btn.innerHTML = old;
   }
 
   const I = {
@@ -1676,7 +1695,7 @@
     if (sameReq.length) lines.push(`Other candidates on same req: ` + sameReq.slice(0, 8).map((o) => `${o.Candidate || o.Name} (${o.Status || ""})`).join("; "));
     return lines.join("\n");
   }
-  const AI_PERSONA = "You are an expert sales-operations advisor built into the pipeline app of a B2B IT staffing and GCC (Global Capability Centre) sales leader in India (company: InitiateFirst). You are given a LIVE SNAPSHOT covering THREE things: (A) the SALES pipeline (deals, funnel, leads, commitments), (B) the DELIVERY pipeline (candidates and open requirements), and (C) a COLLATERAL LIBRARY of sales files (pitch decks, presentations, templates) listed by title, type, tags and link. Rules: (1) Use ONLY the snapshot data — never invent accounts, candidates, files, numbers or facts not present. (2) Be specific — name the actual accounts/candidates/files and cite the real numbers. (3) Give practical, prioritised, action-oriented advice; prefer a short ranked list with a one-line 'why' each. (4) For the collateral library you may recommend the best file and give its link. Some files include CONTENT (real text read from inside the file) — when CONTENT is shown you MAY quote and summarise it; when only title/type/tags/link are shown, do NOT guess or invent what is inside that file. (5) If the data lacks what's needed, say so in one line. (6) Keep it focused (~220 words) unless asked for more. Use plain text with simple bullets.";
+  const AI_PERSONA = "You are an expert sales-operations advisor built into the pipeline app of a B2B IT staffing and GCC (Global Capability Centre) sales leader in India (company: InitiateFirst). You are given a LIVE SNAPSHOT covering THREE things: (A) the SALES pipeline (deals, funnel, leads, commitments), (B) the DELIVERY pipeline (candidates and open requirements), and (C) a COLLATERAL LIBRARY of sales files (pitch decks, presentations, templates) listed by title, type, tags and link. Rules: (1) Use ONLY the snapshot data — never invent accounts, candidates, files, numbers or facts not present. (2) Be specific — name the actual accounts/candidates/files and cite the real numbers. (3) Give practical, prioritised, action-oriented advice; prefer a short ranked list with a one-line 'why' each. (4) For the collateral library, when you recommend a file, write it as a clickable markdown link [Title](link) using its exact link from the data (never show the raw URL separately). Some files include CONTENT (real text read from inside the file) — when CONTENT is shown you MAY quote and summarise it; when only title/type/tags/link are shown, do NOT guess or invent what is inside that file. (5) If the data lacks what's needed, say so in one line. (6) Keep it focused (~220 words) unless asked for more. Use plain text with simple bullets.";
   const ASK_PRESETS = [
     ["📊 Analyse my funnel", "Analyse my current sales funnel. Where are deals concentrated, where is the likely drop-off, and what does the shape tell me? Name the accounts in each key stage."],
     ["⚠️ What's at risk?", "Which of my open deals are most at risk of slipping or going cold, and why? Give me a prioritised list with the single best next action for each."],
@@ -2034,7 +2053,7 @@
     const note = c.Notes ? String(c.Notes).split("|")[0].trim() : "";
     return `<div class="card deal" style="padding:9px;margin:0 0 8px;cursor:pointer" data-act="dlog" data-sig='${esc(c._sig)}'>
       <div style="font-weight:800;font-size:12.5px">${esc(c.Candidate)}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:6px"><span class="chip ${chipCls}">${esc(c.Status || "-")}</span><span style="font-size:10px;font-weight:800;color:${col}">${esc(qAgeLabel(c))}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:6px"><span class="chip ${chipCls}" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto">${esc(c.Status || "-")}</span><span style="font-size:10px;font-weight:800;color:${col};flex:none">${esc(qAgeLabel(c))}</span></div>
       ${note ? `<div style="font-size:10.5px;color:var(--ink-3);margin-top:6px;font-style:italic;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(note)}</div>` : ""}
       <div style="font-size:10px;margin-top:7px;padding-top:6px;border-top:1px dashed var(--b);color:var(--ink-2)">→ ${esc(qNext(c))}</div>
     </div>`;
