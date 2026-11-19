@@ -15,7 +15,7 @@
     try {
       const now = Date.now(), dk = new Date().toLocaleDateString("en-CA"); // local yyyy-mm-dd
       const o = actStore(); (o[dk] = o[dk] || []).push({ t: now, x: text });
-      const keys = Object.keys(o).sort(); while (keys.length > 14) delete o[keys.shift()];
+      const keys = Object.keys(o).sort(); while (keys.length > 130) delete o[keys.shift()];  // keep ~a quarter
       if (o[dk].length > 500) o[dk] = o[dk].slice(-500);
       actSave(o);
     } catch (e) {}
@@ -1366,31 +1366,47 @@
       <div class="card"><div class="hint">Deal IDs are identifiers, not row numbers — ID D-037 can sit on any row, and the app's list is sorted by priority, not by row. That by itself is normal; only duplicate or blank IDs cause trouble.</div></div>` };
   };
 
-  let dayLogOff = 0;
+  let dayLogMode = "today";
+  const DAY_MODES = [["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["month", "This month"], ["quarter", "This quarter"]];
+  const fmtT = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const dayLabel = (d) => d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+  function dayRange(mode) {
+    const n = new Date(); n.setHours(0, 0, 0, 0);
+    const start = new Date(n), end = new Date(n);
+    if (mode === "yesterday") { start.setDate(start.getDate() - 1); end.setDate(end.getDate() - 1); }
+    else if (mode === "week") { start.setDate(start.getDate() - ((start.getDay() + 6) % 7)); }      // Monday → today
+    else if (mode === "month") { start.setDate(1); }
+    else if (mode === "quarter") { start.setMonth(Math.floor(start.getMonth() / 3) * 3, 1); }
+    return { start, end };
+  }
   V.daylog = () => {
     const log = actStore();
-    const keyFor = (off) => { const d = new Date(); d.setDate(d.getDate() + off); return d.toLocaleDateString("en-CA"); };
-    const labelFor = (off) => off === 0 ? "Today" : off === -1 ? "Yesterday" : new Date(Date.now() + off * 864e5).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
-    const key = keyFor(dayLogOff);
-    const entries = (log[key] || []).slice().sort((a, b) => a.t - b.t);
-    const fmtT = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-    const body = entries.length
-      ? `<div class="card" style="padding:0;overflow:hidden">${entries.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`
-      : '<div class="card"><div class="empty">Nothing logged for this day yet. Follow-ups, stage moves, new candidates, meetings, imports — everything you do in the app shows up here for your stand-up.</div></div>';
+    const { start, end } = dayRange(dayLogMode);
+    const days = []; let total = 0;
+    for (let d = new Date(end); d >= start; d.setDate(d.getDate() - 1)) { const k = d.toLocaleDateString("en-CA"); const e = (log[k] || []).slice().sort((a, b) => a.t - b.t); if (e.length) { days.push({ d: new Date(d), e }); total += e.length; } }
+    const rangeText = dayLogMode === "today" || dayLogMode === "yesterday" ? dayLabel(start) : `${dayLabel(start)} – ${dayLabel(end)}`;
+    const dayBlock = (dd) => `<div class="sec"><h2>${esc(dayLabel(dd.d))}</h2><span class="count">${dd.e.length}</span></div>
+      <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
+    const body = days.length ? days.map(dayBlock).join("")
+      : '<div class="card"><div class="empty">Nothing logged in this period yet. Follow-ups, stage moves, new candidates, meetings, imports — everything you do in the app shows up here for your stand-up & reviews.</div></div>';
     return {
-      title: "My day", back: true, html: `
-      <div class="seg" id="dayseg" style="margin-bottom:8px"><button data-o="0" class="${dayLogOff === 0 ? "on" : ""}">Today</button><button data-o="-1" class="${dayLogOff === -1 ? "on" : ""}">Yesterday</button></div>
-      <div class="sec"><h2>${esc(labelFor(dayLogOff))} · ${entries.length} action(s)</h2></div>
+      title: "My activity", back: true, html: `
+      <div class="seg" id="dayseg" style="margin-bottom:10px;flex-wrap:wrap">${DAY_MODES.map(([v, l]) => `<button data-o="${v}" class="${dayLogMode === v ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="hint" style="margin:0 4px 6px">${esc(rangeText)} · <b>${total}</b> action(s)</div>
       ${body}
-      ${entries.length ? `<button class="btn pri block" id="copyday" style="margin-top:10px">${I.copy} Copy for stand-up</button>` : ""}`,
+      ${total ? `<button class="btn pri block" id="copyday" style="margin-top:10px">${I.copy} Copy for stand-up / review</button>` : ""}`,
       mount: (el) => {
-        $("#dayseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { dayLogOff = +b.dataset.o; render(); } };
-        const cp = $("#copyday", el); if (cp) cp.onclick = () => { copyText(`Stand-up · ${labelFor(dayLogOff)}\n` + entries.map((e) => `• ${fmtT(e.t)} — ${e.x}`).join("\n")); toast("Copied — paste into your stand-up"); };
+        $("#dayseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { dayLogMode = b.dataset.o; render(); } };
+        const cp = $("#copyday", el); if (cp) cp.onclick = () => {
+          const head = `${DAY_MODES.find((m) => m[0] === dayLogMode)[1]} · ${rangeText} (${total} actions)`;
+          const txt = head + "\n\n" + days.map((dd) => dayLabel(dd.d) + "\n" + dd.e.map((e) => `• ${fmtT(e.t)} — ${e.x}`).join("\n")).join("\n\n");
+          copyText(txt); toast("Copied — paste into your stand-up / review");
+        };
       },
     };
   };
   V.more = () => {
-    const tiles = [["#/daylog", I.today, "My day · stand-up", "Everything you did today"], ["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
+    const tiles = [["#/daylog", I.today, "My activity", "Daily / weekly / monthly / quarterly"], ["#/delivery", I.req, "Delivery", "Requirements, candidates & funnel"], ["#/library", I.lib, "Library", "Pitches, email templates, decks"], ["#/outreach", I.out, "Outreach", "Weekly email / call / LinkedIn counters"], ["#/standup", I.stand, "Stand-up", "This week's agenda as slides"], ["#/meetings", I.cal, "Meetings", "Book, close out, DM meetings"], ["#/leads", I.lead, "Leads & events", "Quick-add, scan cards"],
       ["#/proposals", I.rupee, "Proposals & rates", "GM% and approvals"], ["#/reqs", I.req, "Requirements & logos", "TA fill, logos, 60-day incentive"], ["#/commitments", I.flag, "Commitments", "Top 3 for the fortnight"],
       ["#/contacts", I.people, "Client contacts", "Broadcom, Mouritech, UWorld..."], ["#/datacheck", I.search, "Data check", "Missing contacts & duplicate IDs"], ["#/settings", I.sync, "Sync & settings", "Status, theme, sign out"]];
     return { title: "More", html: `<div class="grid">${tiles.map(([h, ic, t, s]) => `<a class="tile" href="${h}">${ic}<b>${t}</b><span>${s}</span></a>`).join("")}
