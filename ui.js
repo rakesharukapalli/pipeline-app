@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v44";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v46";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -228,6 +228,9 @@
   let ttState = { connected: false, configured: false, checked: false };
   let ttLastPull = 0;
   const ttPaused = () => { try { return localStorage.getItem("pp.ttpause") === "1"; } catch (e) { return false; } };
+  // Auto-push to TickTick is OFF by default — the sheet saves fast, and TickTick is updated only
+  // when you tap the TickTick button, OR if you turn auto-push on here. ("1" = auto on.)
+  const ttAutoOn = () => { try { return localStorage.getItem("pp.ttauto") === "1"; } catch (e) { return false; } };
   async function ttRefreshState() {
     if (B.demo || ttPaused()) { ttState = { connected: false, demo: B.demo, paused: ttPaused(), checked: true }; return ttState; }
     try { const s = await ttCall("ticktick_status"); ttState = Object.assign({ checked: true }, s); }
@@ -239,9 +242,22 @@
     const now = Date.now(); if (!force && now - ttLastPull < 45000) return;
     ttLastPull = now; ttPullAll(null, true);
   }
-  // Fire-and-forget push when the user changes a follow-up in the app.
-  function ttAutoDeal(r) { if (!B.demo && !ttPaused() && ttState.connected && isNum(r["Next Step Date"])) ttPushDeal(r).catch(() => {}); }
-  function ttAutoCommit(c) { if (!B.demo && !ttPaused() && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttPushCommit(c).catch(() => {}); }
+  // TickTick pushes are DEFERRED: they run only after the sheet save queue is empty, one at a
+  // time, so they never compete with the sheet save for an Apps Script execution slot (which was
+  // making saves feel slow). Each is a separate call to the same endpoint, hence the throttling.
+  const ttPending = [];
+  let ttDrainTimer = null;
+  function ttDrain() {
+    clearTimeout(ttDrainTimer);
+    ttDrainTimer = setTimeout(async () => {
+      if (S.queue.length) { ttDrain(); return; }   // wait until sheet writes finish
+      const jobs = ttPending.splice(0);
+      for (const j of jobs) { try { await j(); } catch (e) {} }   // sequential, never parallel
+    }, 3000);
+  }
+  function ttLater(fn) { ttPending.push(fn); ttDrain(); }
+  function ttAutoDeal(r) { if (ttAutoOn() && !B.demo && !ttPaused() && ttState.connected && isNum(r["Next Step Date"])) ttLater(() => ttPushDeal(r)); }
+  function ttAutoCommit(c) { if (ttAutoOn() && !B.demo && !ttPaused() && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttLater(() => ttPushCommit(c)); }
 
   // ---------------- AI (optional, via your private Cloudflare Workers AI endpoint)
   const aiOn = () => !!(C.aiUrl && !/PASTE/.test(C.aiUrl));
@@ -704,13 +720,13 @@
         <a class="${wa ? "" : "dis"}" href="${wa || "#"}" target="_blank" rel="noopener" data-act="wa" data-id="${esc(r["Deal ID"])}">${I.wa}WhatsApp</a>
         <a class="${email ? "" : "dis"}" href="mailto:${esc(email)}" data-act="mail" data-id="${esc(r["Deal ID"])}">${I.mail}Email</a>
         <a href="${liLink(r.Contact, r.Account)}" target="_blank" rel="noopener">${I.li}LinkedIn</a>
-        <button data-act="log" data-id="${esc(r["Deal ID"])}">${I.log}Log</button>
         <button data-act="tt" data-id="${esc(r["Deal ID"])}">${I.tt}TickTick</button>
       </div>
+      <button class="btn pri block" data-act="log" data-id="${esc(r["Deal ID"])}" style="margin-bottom:10px">${I.log}<span style="margin-left:6px">Update — log contact & next step</span></button>
       <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
         <div><div style="font-size:12px;color:var(--ink-3)">NEXT STEP</div><div style="font-weight:650;margin-top:2px">${esc(r["Next Step"] || "No next step set")}</div>
         <div style="margin-top:6px">${followChip(x.follow, r["Next Step Date"])} ${r.Blocker ? `<span class="chip">Blocker: ${esc(r.Blocker)}</span>` : ""}</div></div>
-        <button class="btn" data-act="snooze" data-id="${esc(r["Deal ID"])}">Reschedule</button></div></div>
+        </div></div>
       ${aiOn() ? `<button class="btn pri block" id="aimove" style="margin-bottom:10px">✨ Suggest next move</button><div id="aimoveout"></div>` : ""}
       <div class="card"><div style="font-size:12px;color:var(--ink-3);margin-bottom:6px">STAGE</div>
         <div class="stepper">${stages.map((s, i) => `<button data-act="stage" data-id="${esc(r["Deal ID"])}" data-v="${esc(s)}" class="${s === r.Stage ? "on" : i < si && si < 9 ? "done" : ""}">${esc(s)}</button>`).join("")}</div>
@@ -721,7 +737,6 @@
         <button data-act="newmeeting" data-id="${esc(r["Deal ID"])}">${"Book meeting"}</button>
         <button data-act="newprop" data-id="${esc(r["Deal ID"])}">Proposal / rate card</button>
         <button data-act="newreq" data-id="${esc(r["Deal ID"])}">Requirement</button>
-        <button data-act="edit" data-id="${esc(r["Deal ID"])}">Edit details</button>
       </div>
       <div class="card"><div class="kv">
         <div>Source</div><div>${esc(r.Source)}</div>
@@ -756,23 +771,36 @@
   const OUTCOMES = ["No answer", "Call Busy", "Connected", "Replied", "Meeting booked", "Requirement shared", "Call back later", "Not interested"];
   const NEXT_SUGGEST = ["Follow-up call", "Send capability deck", "Send rate card", "Share profiles", "Book meeting", "Proposal follow-up", "Check-in next quarter"];
   const CH_MAP = { Call: "Cold Call", WhatsApp: "Cold Call", Email: "Email", LinkedIn: "LinkedIn" };
+  // ---- ONE unified "Update" sheet: the single place to log a contact AND update any detail.
   function logTouch(r, preset = {}) {
+    const t = today();
+    const billL = isNum(r["Est. Monthly Billing (INR)"]) ? r["Est. Monthly Billing (INR)"] / 1e5 : "";
     const html = `
-      <div class="f"><label>Channel</label>${chips("ch", ["Call", "WhatsApp", "Email", "LinkedIn", "Meeting"], preset.ch || "Call")}</div>
-      <div class="f"><label>Outcome</label>${chips("oc", OUTCOMES, preset.oc || "")}</div>
+      <div class="f"><label>Mode of contact *</label>${chips("ch", ["Call", "WhatsApp", "Email", "LinkedIn", "Meeting"], preset.ch || "Call")}</div>
+      <div class="f"><label>Outcome / response *</label>${chips("oc", OUTCOMES, preset.oc || "")}</div>
+      ${field("When did this happen? *", "cdate", t, "date")}
       <div id="mtgbox" class="hidden"><div class="f2">${field("Meeting date", "mdate", "", "date")}${field("Time", "mtime", "11:00", "time")}</div>
         <div class="f"><label>With decision maker?</label>${chips("mdm", ["Y", "N"], "Y")}</div></div>
-      ${field("Notes", "notes", "", "textarea", 'placeholder="What happened? Need, timeline, budget, who decides..."')}
+      ${field("Notes — what they said / response *", "notes", "", "textarea", 'placeholder="What happened? Need, timeline, budget, who decides..."')}
       <div class="f"><label>Next step</label>
         <select name="nextsel" id="nextsel"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? `<option selected>${esc(r["Next Step"])}</option>` : ""}<option value="__other">Other (type your own)…</option></select>
         <input name="next" id="nextinput" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="hidden" style="margin-top:6px"></div>
-      <div class="f"><label>Next step date</label>${dateChips("ndate", "")}</div>
+      <div class="f"><label>Next follow-up date *</label>${dateChips("ndate", "")}</div>
       <div class="f"><label>Temperature</label>${chips("temp", L("Temp"), r.Temperature)}</div>
       ${select("Stage", "stage", L("Stage"), r.Stage, false)}
-      <div class="toggle"><div><b>Outlook reminder</b><div class="hint">Adds a 15-min event on the next-step date</div></div><input type="checkbox" name="cal" ${localStorage.getItem("pp.cal") === "0" ? "" : "checked"}></div>
+      <details class="moredetails"><summary>More details (edit anything — optional)</summary>
+        <div style="margin-top:10px">
+        <div class="f2">${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}${select("Service line", "Service Line", L("Service"), r["Service Line"])}</div>
+        <div class="f2">${field("Designation", "Designation", r.Designation)}${field("City", "City", r.City)}</div>
+        <div class="f2">${field("Phone", "Phone", r.Phone, "tel")}${field("Email", "Email", r.Email, "email")}</div>
+        <div class="f2">${field("Est. headcount", "Est. Headcount", r["Est. Headcount"], "number", 'inputmode="numeric"')}${field("Est. billing (₹ lakhs/mo)", "billL", billL, "number", 'step="0.1" inputmode="decimal"')}</div>
+        ${field("Conversation links (one per line)", "Links", r.Links, "textarea")}
+        </div>
+      </details>
+      <div class="toggle"><div><b>Outlook reminder</b><div class="hint">Adds a 15-min event on the next follow-up date</div></div><input type="checkbox" name="cal" ${localStorage.getItem("pp.cal") === "0" ? "" : "checked"}></div>
       ${field("Reminder time", "rtime", "11:00", "time")}
-      <button class="btn pri block" id="save">Save</button>`;
-    sheet(`Log touch · ${r.Contact}`, html, (el, close) => {
+      <button class="btn pri block" id="save">Save update</button>`;
+    sheet(`Update · ${r.Contact || r.Account}`, html, (el, close) => {
       wireDateChips(el);
       const nsel = $("#nextsel", el), nin = $("#nextinput", el);
       if (nsel) nsel.onchange = () => { const v = nsel.value; if (v === "__other") { nin.classList.remove("hidden"); nin.value = ""; nin.focus(); } else if (v) { nin.value = v; nin.classList.add("hidden"); } else { nin.value = ""; nin.classList.add("hidden"); } };
@@ -791,25 +819,32 @@
       });
       $("#save", el).onclick = () => {
         const f = form(el); const ch = chipVal(el, "ch") || "Call"; const oc = chipVal(el, "oc");
-        if (!oc) return toast("Pick an outcome", "warn");
-        const t = today();
+        // Mandatory fields, with friendly messages
+        if (!oc) return toast("Pick the outcome / response", "warn");
+        const cd = isNum(f.cdate) ? f.cdate : t;
+        const noAnswer = ["No answer", "Call Busy"].includes(oc);
+        if (!f.notes && !noAnswer) return toast("Add a quick note on what they said", "warn");
         let nd = f.ndate;
         if (oc === "Meeting booked" && isNum(f.mdate) && !nd) nd = f.mdate;
+        if (!isNum(nd) && oc !== "Not interested") return toast("Set the next follow-up date", "warn");
         const temp = chipVal(el, "temp") || r.Temperature;
-        const stamp = D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
+        const stamp = D.toJS(cd).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
         const noteLine = `${stamp}: ${ch} - ${oc}${f.notes ? " - " + f.notes : ""}`;
-        const changes = { "Last Contact": t, "Next Step": f.next, "Next Step Date": nd || "", Temperature: temp, Stage: f.stage, Notes: (noteLine + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500) };
-        if (f.stage === "Qualified" && r["Qualified?"] !== "Y") { changes["Qualified?"] = "Y"; if (!isNum(r["Qualified Date"])) changes["Qualified Date"] = t; }
-        if (oc === "Not interested" || (f.stage !== r.Stage && f.stage !== "Contact Established")) { /* keep blocker */ }
+        const changes = { "Last Contact": cd, "Next Step": f.next, "Next Step Date": nd || "", Temperature: temp, Stage: f.stage, Notes: (noteLine + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500) };
+        // "More details" fields — only the ones the user actually changed get written (API.update drops unchanged).
+        changes.Blocker = f.Blocker; changes["Service Line"] = f["Service Line"]; changes.Designation = f.Designation; changes.City = f.City;
+        changes.Phone = f.Phone; changes.Email = f.Email; changes["Est. Headcount"] = f["Est. Headcount"];
+        changes["Est. Monthly Billing (INR)"] = f.billL === "" ? "" : Math.round(f.billL * 1e5); changes.Links = f.Links;
+        if (f.stage === "Qualified" && r["Qualified?"] !== "Y") { changes["Qualified?"] = "Y"; if (!isNum(r["Qualified Date"])) changes["Qualified Date"] = cd; }
         const stageMoved = changes.Stage && changes.Stage !== r.Stage;
-        API.add("activity", { Date: t, "Deal ID": r["Deal ID"], Account: r.Account, Contact: r.Contact, Channel: ch, Outcome: oc, Notes: f.notes, "Next Step": f.next, "Next Step Date": nd || "", "Logged By": C.owner || "" });
+        API.add("activity", { Date: cd, "Deal ID": r["Deal ID"], Account: r.Account, Contact: r.Contact, Channel: ch, Outcome: oc, Notes: f.notes, "Next Step": f.next, "Next Step Date": nd || "", "Logged By": C.owner || "" });
         suppressAct = true; API.update("pipeline", r, changes); suppressAct = false;   // touch already logged via the activity entry above
         if (stageMoved) logAct(`${r.Account} · stage → ${changes.Stage}`);
         ttAutoDeal(r);
         const oc_ch = CH_MAP[ch];
         if (oc_ch) {
           API.inc(oc_ch, "Activities", 1);
-          if (!["No answer", "Call Busy"].includes(oc)) API.inc(oc_ch, "Responses", 1);
+          if (!noAnswer) API.inc(oc_ch, "Responses", 1);
           if (oc === "Meeting booked") API.inc(oc_ch, "Meetings Booked", 1);
         }
         if (oc === "Meeting booked" && isNum(f.mdate)) {
@@ -819,7 +854,7 @@
           API.event(reminderEvent(`${f.next || "Follow-up"}: ${r.Contact} (${r.Account})`, nd, f.rtime, contactBlock(r)));
         }
         localStorage.setItem("pp.cal", f.cal ? "1" : "0");
-        close(); toast("Logged · " + r.Account); render();
+        close(); toast("Updated · " + r.Account); render();
       };
     });
   }
@@ -1506,6 +1541,20 @@
     // ---- consolidated summary (leadership-ready), built from this period's touches + notes
     const acts = live("activity").filter((a) => isNum(a.Date) && a.Date >= sSer && a.Date <= eSer);
     const localTexts = []; Object.keys(log).forEach((k) => { if (k >= startKey && k <= endKey) (log[k] || []).forEach((e) => localTexts.push(e.x)); });
+    // ---- GLANCE: unique accounts touched + unique leads touched, with mode / outcome / note / next f/u
+    const accMap = {};
+    acts.slice().sort((a, b) => (a.Date || 0) - (b.Date || 0)).forEach((a) => {
+      const k = (a.Account || "(no account)");
+      const g = accMap[k] || (accMap[k] = { name: k, modes: new Set(), contacts: new Set(), n: 0 });
+      g.n++; if (a.Channel) g.modes.add(a.Channel); if (a.Contact) g.contacts.add(a.Contact);
+      if (a.Outcome) g.outcome = a.Outcome;                               // latest wins (sorted oldest→newest)
+      if (a.Notes && String(a.Notes).trim()) g.note = String(a.Notes).trim();
+      if (isNum(a["Next Step Date"])) g.nf = a["Next Step Date"];
+    });
+    const touchAccts = Object.values(accMap).sort((a, b) => a.name.localeCompare(b.name));
+    const touchLeads = live("leads").filter((l) => isNum(l["Last Follow-up"]) && l["Last Follow-up"] >= sSer && l["Last Follow-up"] <= eSer)
+      .map((l) => ({ name: l.Name || l.Organization || "(lead)", org: l.Organization, resp: l.Response, note: String(l.Comments || "").trim(), nf: l["Next Follow-up"] }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
     const sumLines = [], sumNotes = [];
     { const ch = {}; let resp = 0, mtg = 0; const accs = new Set();
       acts.forEach((a) => { const c = a.Channel || "Other"; ch[c] = (ch[c] || 0) + 1; const oc = String(a.Outcome || ""); if (oc && !/no answer|call busy/i.test(oc)) resp++; if (/meeting/i.test(oc)) mtg++; if (a.Account) accs.add(a.Account); if (a.Notes && String(a.Notes).trim()) sumNotes.push(`${a.Account ? a.Account + " — " : ""}${String(a.Notes).trim()}`); });
@@ -1525,12 +1574,24 @@
       if (adv.length) sumLines.push(adv.join(" · ") + ".");
     }
     const notesTop = sumNotes.slice(0, 10);
+    // glance rows (deterministic — no AI needed)
+    const glanceRow = (name, line, note, nf) => `<div style="padding:8px 0;border-top:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;gap:8px"><b style="font-size:13.5px">${esc(name)}</b>${isNum(nf) ? `<span style="font-size:11px;color:var(--ink-3);white-space:nowrap">f/u ${esc(D.fmt(nf, { abs: 1 }))}</span>` : ""}</div>
+      ${line ? `<div style="font-size:12px;color:var(--ink-2);margin-top:2px">${esc(line)}</div>` : ""}
+      ${note ? `<div style="font-size:12px;color:var(--ink-3);margin-top:2px">${esc(note)}</div>` : ""}</div>`;
+    const glanceHtml = (touchAccts.length || touchLeads.length) ? `
+      ${touchAccts.length ? `<div style="font-size:12px;color:var(--ink-3);margin:10px 0 0;font-weight:800;text-transform:uppercase;letter-spacing:.04em">Accounts touched · ${touchAccts.length}</div>
+        ${touchAccts.map((g) => glanceRow(g.name, [[...g.modes].join("/"), g.outcome, g.contacts.size ? [...g.contacts][0] : ""].filter(Boolean).join(" · "), g.note, g.nf)).join("")}` : ""}
+      ${touchLeads.length ? `<div style="font-size:12px;color:var(--ink-3);margin:12px 0 0;font-weight:800;text-transform:uppercase;letter-spacing:.04em">Leads touched · ${touchLeads.length}</div>
+        ${touchLeads.map((l) => glanceRow(l.name + (l.org ? " (" + l.org + ")" : ""), l.resp || "", l.note, l.nf)).join("")}` : ""}` : "";
     const summaryCard = total ? `<div class="sec"><h2>Summary — ${esc(modeLabel)}</h2></div>
       <div class="card">${sumLines.map((l) => `<div style="margin-bottom:6px">${esc(l)}</div>`).join("") || '<div class="hint">Activity recorded — see the list below.</div>'}
-      ${notesTop.length ? `<div style="font-size:12px;color:var(--ink-3);margin:8px 0 4px">Key notes / comments</div><ul style="margin:0 0 0 18px;font-size:13px;padding:0">${notesTop.map((n) => `<li style="margin-bottom:3px">${esc(n)}</li>`).join("")}</ul>` : ""}
-      <button class="btn block" id="copysum" style="margin-top:10px">${I.copy} Copy summary for leadership</button>
+      ${glanceHtml}
+      <button class="btn block" id="copysum" style="margin-top:12px">${I.copy} Copy summary for leadership</button>
       ${aiOn() ? `<button class="btn pri block" id="aisum" style="margin-top:8px">✨ AI summary & advice</button><div id="aiout"></div>` : ""}</div>` : "";
-    const summaryText = () => `${modeLabel} · ${rangeText}\n` + (sumLines.length ? sumLines.map((l) => "• " + l).join("\n") : "• Activity recorded.") + (notesTop.length ? "\n\nKey notes:\n" + notesTop.map((n) => "- " + n).join("\n") : "");
+    const glanceText = () => (touchAccts.length ? "\nAccounts touched (" + touchAccts.length + "):\n" + touchAccts.map((g) => `• ${g.name} — ${[[...g.modes].join("/"), g.outcome].filter(Boolean).join(", ")}${g.note ? " — " + g.note : ""}${isNum(g.nf) ? " (next " + D.fmt(g.nf, { abs: 1 }) + ")" : ""}`).join("\n") : "")
+      + (touchLeads.length ? "\n\nLeads touched (" + touchLeads.length + "):\n" + touchLeads.map((l) => `• ${l.name}${l.org ? " (" + l.org + ")" : ""}${l.note ? " — " + l.note : ""}${isNum(l.nf) ? " (next " + D.fmt(l.nf, { abs: 1 }) + ")" : ""}`).join("\n") : "");
+    const summaryText = () => `${modeLabel} · ${rangeText}\n` + (sumLines.length ? sumLines.map((l) => "• " + l).join("\n") : "• Activity recorded.") + glanceText();
     const dayBlock = (dd) => `<div class="sec"><h2>${esc(dayLabel(dd.d))}</h2><span class="count">${dd.e.length}</span></div>
       <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${e.noTime ? "" : fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
     const body = days.length ? days.map(dayBlock).join("")
@@ -1549,12 +1610,14 @@
         const ai = $("#aisum", el); if (ai) ai.onclick = async () => {
           const old = ai.innerHTML; ai.disabled = true; ai.innerHTML = "Thinking…";
           try {
-            const ctx = `Period: ${modeLabel} (${rangeText})\n\nActivity stats:\n${sumLines.join("\n") || "(none)"}\n\nNotes & comments:\n${notesTop.join("\n") || "(none)"}`;
+            const acctCtx = touchAccts.map((g) => `${g.name} | ${[...g.modes].join("/") || "-"} | ${g.outcome || "-"} | ${g.note || "-"} | next ${isNum(g.nf) ? D.fmt(g.nf, { abs: 1 }) : "-"}`).join("\n") || "(none)";
+            const leadCtx = touchLeads.map((l) => `${l.name}${l.org ? " (" + l.org + ")" : ""} | ${l.resp || "-"} | ${l.note || "-"} | next ${isNum(l.nf) ? D.fmt(l.nf, { abs: 1 }) : "-"}`).join("\n") || "(none)";
+            const ctx = `Period: ${modeLabel} (${rangeText})\nStats: ${sumLines.join(" ") || "(none)"}\n\nACCOUNTS TOUCHED (unique) — "name | mode | outcome | note | next follow-up":\n${acctCtx}\n\nLEADS TOUCHED (unique) — "name | response | note | next follow-up":\n${leadCtx}`;
             const text = await aiAsk([
-              { role: "system", content: "You are a sales-operations assistant for a B2B IT staffing and GCC (Global Capability Centre) sales leader in India. Using ONLY the data provided, write a crisp leadership update: (1) a 2-3 sentence narrative of the period, (2) 2-4 key highlights as bullets, (3) 2-3 risks or recommended next actions. Reference the specific accounts and numbers given. Do not invent any data. Keep it under ~180 words." },
+              { role: "system", content: "You are a sales-operations assistant for a B2B IT staffing & GCC sales leader in India. Produce a leadership glance for the period using ONLY the data given. Format EXACTLY: (1) one-line summary (how many unique accounts and leads were touched, main channels). (2) A section 'Accounts touched:' listing each UNIQUE account once as a bullet: Account — mode, outcome, one-line what-happened (from the note), next follow-up date. (3) A section 'Leads touched:' same style (skip if none). (4) 'Follow-ups coming up:' the next dates that need action. No duplication — each account/lead appears once. Don't invent anything not in the data. Keep bullets tight." },
               { role: "user", content: ctx },
             ]);
-            $("#aiout", el).innerHTML = `<div class="card" style="white-space:pre-wrap;margin-top:8px">${esc(text)}</div><button class="btn block" id="aicopy" style="margin-top:8px">${I.copy} Copy AI update</button>`;
+            $("#aiout", el).innerHTML = `<div class="card" style="white-space:pre-wrap;margin-top:8px">${mdLite(text)}</div><button class="btn block" id="aicopy" style="margin-top:8px">${I.copy} Copy AI update</button>`;
             const ac = $("#aicopy", el); if (ac) ac.onclick = () => { copyText(text); toast("AI update copied"); };
           } catch (e) { toast("AI: " + (e.message || e), "warn"); }
           ai.disabled = false; ai.innerHTML = old;
@@ -1778,16 +1841,20 @@
       mount: (el) => {
         $('.chips[data-name="theme"]', el).addEventListener("pick", (e) => { const v = e.detail; if (v) { localStorage.setItem("pp.theme", v); document.documentElement.setAttribute("data-theme", v); } else { localStorage.removeItem("pp.theme"); document.documentElement.removeAttribute("data-theme"); } });
         const box = $("#ttbox", el);
-        const pauseRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpause" ${ttPaused() ? "checked" : ""}> Pause all TickTick sync (use this if the sheet sync is slow)</label>`;
-        const wirePause = () => { const p = $("#ttpause", el); if (p) p.onchange = () => { try { localStorage.setItem("pp.ttpause", p.checked ? "1" : "0"); } catch (e) {} toast(p.checked ? "TickTick paused" : "TickTick resumed"); }; };
+        const autoRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttauto" ${ttAutoOn() ? "checked" : ""}> Auto-send follow-ups to TickTick on every save <span class="hint">(off = fastest; TickTick updates only when you tap the TickTick button)</span></label>`;
+        const pauseRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpause" ${ttPaused() ? "checked" : ""}> Pause ALL TickTick sync (push & pull)</label>`;
+        const wirePause = () => {
+          const p = $("#ttpause", el); if (p) p.onchange = () => { try { localStorage.setItem("pp.ttpause", p.checked ? "1" : "0"); } catch (e) {} toast(p.checked ? "TickTick paused" : "TickTick resumed"); };
+          const a = $("#ttauto", el); if (a) a.onchange = () => { try { localStorage.setItem("pp.ttauto", a.checked ? "1" : "0"); } catch (e) {} toast(a.checked ? "Auto-send to TickTick ON" : "Auto-send OFF — use the TickTick button"); };
+        };
         if (ttPaused()) { box.innerHTML = '<p>⏸ <b>TickTick is paused.</b> Only your Google Sheet sync is running. Uncheck below to resume.</p>' + pauseRow(); wirePause(); return; }
         const paint = (st) => {
           box.dataset.done = "1";
           if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)' + pauseRow(); wirePause(); return; }
           if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>` + pauseRow(); wirePause(); return; }
           const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
-          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. <b>Sales / pipeline & commitment</b> follow-ups sync with TickTick. Delivery is kept separate — it never goes to TickTick.</p>
-            <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>${pauseRow()}`;
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. ${ttAutoOn() ? "<b>Sales / pipeline & commitment</b> follow-ups auto-sync to TickTick." : "Auto-send is <b>off</b> — your sheet saves stay fast; tap the TickTick button on a lead, or <b>Push all</b> below, to send."} Delivery is kept separate — it never goes to TickTick.</p>
+            <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>${autoRow()}${pauseRow()}`;
           $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
           $("#ttpull", el).onclick = () => ttPullAll($("#ttpull", el));
           wirePause();
@@ -1838,6 +1905,7 @@
         case "libview": { const i = bySig("library", sig); return i && libViewSheet(i); }
         case "libask": e.stopPropagation(); { const i = bySig("library", sig); return i && libAskSheet(i); }
         case "revcopy": e.stopPropagation(); copyText(reviewSummaryText); return toast("Review summary copied");
+        case "dayrepcopy": e.stopPropagation(); copyText(deliveryDayText); return toast("Day report copied");
         case "dcand": { const c = bySig("delivery", sig); return c && dCandForm(c); }
         case "dlog": e.stopPropagation(); { const c = bySig("delivery", sig); return c && dLog(c); }
         case "newcand": return dCandForm(null, a.dataset.req ? dreqs().find((r) => r["Req ID"] === a.dataset.req) : null);
@@ -1957,7 +2025,7 @@
     const g = $("#delivseg", el); if (g) g.onclick = (e) => { const b = e.target.closest("button"); if (b) { setDelivView(b.dataset.v); render(); } };
     const p = $("#revperiod", el); if (p) p.onclick = (e) => { const b = e.target.closest("button"); if (b) { revPeriod = b.dataset.v; render(); } };
   };
-  let reviewSummaryText = "";
+  let reviewSummaryText = "", deliveryDayText = "";
   function deliveryReview(reqs, cands) {
     const t = today(), ws = D.weekStart(t);
     const pstart = periodStart(t);
@@ -1993,6 +2061,19 @@
     Object.keys(clientOpen).forEach((k) => { byClient[k] = byClient[k] || { sub: 0, act: 0, iv: 0, off: 0, jn: 0 }; });
     const clientRows = Object.entries(byClient).sort((a, b) => (clientOpen[b[0]] || 0) - (clientOpen[a[0]] || 0) || b[1].act - a[1].act);
     const nc = Object.keys(clientOpen).length;
+    // ---- Day report glance: what's actively in motion, across reqs / accounts / POCs, by stage
+    const actReqIds = new Set(), actClients = new Set(), actSpocs = new Set(), stageCount = {};
+    active.forEach((c) => {
+      actReqIds.add(c["Req ID"] || (c.Role || "") + "|" + (c.Client || ""));
+      actClients.add(c.Client || "(none)"); if (c.SPOC) actSpocs.add(c.SPOC);
+      const s = STAGE_OF[c.Status] || "Other"; stageCount[s] = (stageCount[s] || 0) + 1;
+    });
+    const stageGlance = STAGE_ORDER.filter((s) => stageCount[s]).map((s) => `${s} ${stageCount[s]}`).join(" · ");
+    // ---- POC-wise (SPOC) stats
+    const spocOpen = {}; openReqs.forEach((r) => { const k = r.SPOC || "(none)"; spocOpen[k] = (spocOpen[k] || 0) + 1; });
+    const bySpoc = {};
+    cands.forEach((c) => { const k = c.SPOC || "(none)"; const o = (bySpoc[k] = bySpoc[k] || { sub: 0, act: 0, iv: 0, off: 0, jn: 0 }); o.sub++; if (dActive(c.Status)) o.act++; if (isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7 && dActive(c.Status)) o.iv++; if (STAGE_OF[c.Status] === "Offer") o.off++; if (dWon(c.Status)) o.jn++; });
+    const spocRows = Object.entries(bySpoc).filter(([k]) => k !== "(none)").sort((a, b) => b[1].act - a[1].act || b[1].sub - a[1].sub);
     const tp = [];
     tp.push(`<b>${openReqs.length}</b> open role${openReqs.length !== 1 ? "s" : ""} across <b>${nc}</b> client${nc !== 1 ? "s" : ""}, avg age <b>${avgAge}d</b>; <b>${active.length}</b> candidates in process.`);
     tp.push(`Funnel: submit→interview <b>${pc(rIv, sub)}%</b>, interview→offer <b>${pc(rOf, rIv)}%</b>, offer→join <b>${pc(rJn, rOf)}%</b>. Overall fill rate <b>${fillRate}%</b>.`);
@@ -2010,8 +2091,19 @@
     const buckets = [["0-7d", 0], ["8-21d", 0], ["22-45d", 0], ["45d+", 0]];
     openReqs.forEach((r) => { const a = ageOf(r); if (a == null) return; if (a <= 7) buckets[0][1]++; else if (a <= 21) buckets[1][1]++; else if (a <= 45) buckets[2][1]++; else buckets[3][1]++; });
     const maxB = Math.max(1, ...buckets.map((b) => b[1]));
+    deliveryDayText = `Delivery day report — ${D.toJS(t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" })}\n`
+      + `• Actively working ${active.length} candidate(s) across ${actReqIds.size} requirement(s), ${actClients.size} account(s), ${actSpocs.size} POC(s).\n`
+      + (stageGlance ? `• In process by stage: ${stageGlance}.\n` : "")
+      + `• Needs action: ${needAttn.length} follow-up(s) due, ${ivWeek.length} interview(s) this week, ${offers.length} offer(s) pending${offerStale.length ? " (" + offerStale.length + " stale)" : ""}.`;
     return `
       <div class="seg" id="revperiod" style="margin-bottom:10px;flex-wrap:wrap">${[["all", "All"], ["w", "Weekly"], ["m", "Monthly"], ["q", "Quarterly"], ["y", "Annually"]].map(([v, l]) => `<button data-v="${v}" class="${revPeriod === v ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="sec"><h2>Today's delivery report</h2><span class="count">${esc(D.fmt(t, { abs: 1 }))}</span></div>
+      <div class="card" style="border-left:5px solid #2EB36A">
+        <div style="font-size:14px;line-height:1.55">Actively working <b>${active.length}</b> candidate${active.length !== 1 ? "s" : ""} across <b>${actReqIds.size}</b> requirement${actReqIds.size !== 1 ? "s" : ""}, <b>${actClients.size}</b> account${actClients.size !== 1 ? "s" : ""}, <b>${actSpocs.size}</b> POC${actSpocs.size !== 1 ? "s" : ""}.</div>
+        ${stageGlance ? `<div style="font-size:13px;color:var(--ink-2);margin-top:7px"><b>By stage:</b> ${esc(stageGlance)}</div>` : ""}
+        <div style="font-size:13px;margin-top:7px"><b>Needs action:</b> ${needAttn.length} follow-up${needAttn.length !== 1 ? "s" : ""} due · ${ivWeek.length} interview${ivWeek.length !== 1 ? "s" : ""} this week · ${offers.length} offer${offers.length !== 1 ? "s" : ""} pending${offerStale.length ? ` <span style="color:#C0392B">(${offerStale.length} stale)</span>` : ""}</div>
+        <div class="acts" style="margin-top:10px"><button class="pri" data-act="dayrepcopy" style="padding:5px 11px;font-size:11.5px;border-radius:10px">${I.copy}<span class="lbl">Copy day report</span></button></div>
+      </div>
       <div class="kpis">
         <button class="kpi" data-scroll="rv-reqs"><div class="v">${openReqs.length}</div><div class="l">Open roles</div></button>
         <button class="kpi"><div class="v">${active.length}</div><div class="l">In process</div></button>
@@ -2030,6 +2122,9 @@
       <div class="sec"><h2>Client-wise</h2><span class="count">${clientRows.length}</span></div>
       <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
         ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${clientOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>
+      ${spocRows.length ? `<div class="sec"><h2>POC-wise (SPOC)</h2><span class="count">${spocRows.length}</span></div>
+      <div class="card"><table class="mini"><tr><th>POC</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
+        ${spocRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${spocOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>` : ""}
       <div class="sec"><h2>Conversion funnel · ${PERIOD_LABEL[revPeriod]}</h2></div>
       <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of prev</th><th class="n">of sub</th></tr>
         <tr><td>Submitted</td><td class="n">${sub}</td><td class="n">—</td><td class="n">100%</td></tr>

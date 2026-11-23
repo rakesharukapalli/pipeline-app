@@ -284,6 +284,11 @@ table.mini td.n{text-align:right;font-variant-numeric:tabular-nums}
 .filters>summary{cursor:pointer;font-weight:800;font-size:13px;list-style:none;padding:3px 0}
 .filters>summary::-webkit-details-marker{display:none}
 .filters>summary::before{content:"⚲ ";opacity:.6}
+.moredetails{margin:4px 0 10px;border:2px dashed var(--line);border-radius:12px;padding:8px 12px}
+.moredetails>summary{cursor:pointer;font-weight:800;font-size:13px;color:var(--ink-2);list-style:none;padding:3px 0}
+.moredetails>summary::-webkit-details-marker{display:none}
+.moredetails>summary::before{content:"▸ "}
+.moredetails[open]>summary::before{content:"▾ "}
 .fgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
 .fsel{width:100%;padding:9px 10px;border:2px solid var(--b);border-radius:10px;background:var(--bg);color:var(--ink);font-size:13px;font-weight:600}
 .frow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap}

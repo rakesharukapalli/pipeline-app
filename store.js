@@ -175,8 +175,13 @@
   function todayCount(channel, field) { const st = load(LS.today, {}); return st.day === D.today() ? (st.c[channel + "|" + field] || 0) : 0; }
 
   // ---------------- sync
-  let flushing = false, flushTimer = null;
+  let flushing = false, flushTimer = null, reconcileTimer = null;
   function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flush, ms == null ? 1200 : ms); }
+  // After a save we DON'T do a second full workbook load (slow). The local rows already
+  // reflect the write, and the UI computes follow-up/score itself. We just refresh the etag,
+  // then — once the user pauses — do ONE quiet full reload to pick up the sheet's calculated
+  // columns. Debounced so a burst of edits doesn't trigger a reload each time.
+  function scheduleReconcile(ms) { clearTimeout(reconcileTimer); reconcileTimer = setTimeout(() => { if (!flushing && !S.queue.length && !document.hidden) refresh(true); }, ms == null ? 9000 : ms); }
 
   async function refresh(silent) {
     if (B.demo === false && !B.account) return;
@@ -283,7 +288,11 @@
     }
     flushing = false;
     if (notes.length) window.UI && UI.toast(notes[0], "warn");
-    await refresh(true);
+    // Fast path: skip the second full load. Just update the etag (cheap) so poll() won't
+    // think the sheet changed under us, mark synced, and reconcile calc columns shortly after.
+    try { const m = await B.meta(); S.etag = m.eTag; } catch (e) {}
+    setStatus(S.queue.length ? "pending" : "synced");
+    scheduleReconcile();
   }
 
   // poll the workbook for changes made in Excel / by others
