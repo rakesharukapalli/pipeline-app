@@ -169,6 +169,8 @@ nav.bottom .fab:active{transform:scale(.93);box-shadow:inset 0 5px 10px rgba(120
   padding:10px 2px;font-size:10px;font-weight:700;color:var(--ink);text-decoration:none;cursor:pointer;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .quick svg{width:20px;height:20px;color:var(--teal);flex:none}
+.quick .upd{color:#141414;background:linear-gradient(#FFD23B,#EFA000);box-shadow:inset 0 2px 1px rgba(255,255,255,.7),inset 0 -5px 8px rgba(150,85,0,.5)}
+.quick .upd svg{color:#141414}
 .quick .dis{opacity:.4;pointer-events:none}
 .stepper{display:flex;gap:7px;overflow-x:auto;padding:2px 0 8px}
 .stepper button{flex:0 0 auto;border:2px solid var(--b);border-radius:20px;padding:7px 12px;font-size:12px;font-weight:800;color:var(--ink-2);cursor:pointer;background:linear-gradient(var(--card),#efe6d6);box-shadow:inset 0 1px 1px rgba(255,255,255,.8)}

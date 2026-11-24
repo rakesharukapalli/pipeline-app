@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v46";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v47";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -676,7 +676,6 @@
   function setStage(r, st) {
     if (!r || r.Stage === st) return;
     const ch = { Stage: st };
-    if (st === "Qualified" && r["Qualified?"] !== "Y") { ch["Qualified?"] = "Y"; if (!isNum(r["Qualified Date"])) ch["Qualified Date"] = today(); }
     API.update("pipeline", r, ch);
     toast(`${r.Account} → ${st}`);
     if (st === "Won - Deployed" || st === "MSA / Contracting" || st === "Empanelment" || st === "First Requirement") ensureAccount(r, st);
@@ -721,15 +720,15 @@
         <a class="${email ? "" : "dis"}" href="mailto:${esc(email)}" data-act="mail" data-id="${esc(r["Deal ID"])}">${I.mail}Email</a>
         <a href="${liLink(r.Contact, r.Account)}" target="_blank" rel="noopener">${I.li}LinkedIn</a>
         <button data-act="tt" data-id="${esc(r["Deal ID"])}">${I.tt}TickTick</button>
+        <button class="upd" data-act="log" data-id="${esc(r["Deal ID"])}">${I.log}Update</button>
       </div>
-      <button class="btn pri block" data-act="log" data-id="${esc(r["Deal ID"])}" style="margin-bottom:10px">${I.log}<span style="margin-left:6px">Update — log contact & next step</span></button>
       <div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
         <div><div style="font-size:12px;color:var(--ink-3)">NEXT STEP</div><div style="font-weight:650;margin-top:2px">${esc(r["Next Step"] || "No next step set")}</div>
         <div style="margin-top:6px">${followChip(x.follow, r["Next Step Date"])} ${r.Blocker ? `<span class="chip">Blocker: ${esc(r.Blocker)}</span>` : ""}</div></div>
         </div></div>
       ${aiOn() ? `<button class="btn pri block" id="aimove" style="margin-bottom:10px">✨ Suggest next move</button><div id="aimoveout"></div>` : ""}
       <div class="card"><div style="font-size:12px;color:var(--ink-3);margin-bottom:6px">STAGE</div>
-        <div class="stepper">${stages.map((s, i) => `<button data-act="stage" data-id="${esc(r["Deal ID"])}" data-v="${esc(s)}" class="${s === r.Stage ? "on" : i < si && si < 9 ? "done" : ""}">${esc(s)}</button>`).join("")}</div>
+        <div class="stepper">${stages.map((s, i) => `<button data-act="stage" data-id="${esc(r["Deal ID"])}" data-v="${esc(s)}" class="${s === r.Stage ? "on" : i < si && !["Nurture", "Lost"].includes(r.Stage) ? "done" : ""}">${esc(s)}</button>`).join("")}</div>
         <div style="font-size:12px;color:var(--ink-3);margin:8px 0 6px">TEMPERATURE</div>
         ${chips("temp", L("Temp"), r.Temperature)}
       </div>
@@ -812,7 +811,7 @@
         const order = L("Stage");
         const lvl = (s) => order.indexOf(s);
         if (v === "Not interested") st.value = "Nurture";
-        else if (v === "Requirement shared" && lvl(r.Stage) < lvl("Qualified")) st.value = "Qualified";
+        else if (v === "Requirement shared" && lvl(r.Stage) < lvl("Discovery Meeting")) st.value = "Discovery Meeting";
         else if (["Connected", "Replied", "Meeting booked", "Call back later"].includes(v) && r.Stage === "Contacted") st.value = "Contact Established";
         else st.value = r.Stage;
         if (v === "Meeting booked" && !$('[name="next"]', el).value) $('[name="next"]', el).value = "Meeting";
@@ -835,7 +834,6 @@
         changes.Blocker = f.Blocker; changes["Service Line"] = f["Service Line"]; changes.Designation = f.Designation; changes.City = f.City;
         changes.Phone = f.Phone; changes.Email = f.Email; changes["Est. Headcount"] = f["Est. Headcount"];
         changes["Est. Monthly Billing (INR)"] = f.billL === "" ? "" : Math.round(f.billL * 1e5); changes.Links = f.Links;
-        if (f.stage === "Qualified" && r["Qualified?"] !== "Y") { changes["Qualified?"] = "Y"; if (!isNum(r["Qualified Date"])) changes["Qualified Date"] = cd; }
         const stageMoved = changes.Stage && changes.Stage !== r.Stage;
         API.add("activity", { Date: cd, "Deal ID": r["Deal ID"], Account: r.Account, Contact: r.Contact, Channel: ch, Outcome: oc, Notes: f.notes, "Next Step": f.next, "Next Step Date": nd || "", "Logged By": C.owner || "" });
         suppressAct = true; API.update("pipeline", r, changes); suppressAct = false;   // touch already logged via the activity entry above
@@ -877,7 +875,7 @@
 
   // ---------------- deal form (new / edit)
   function dealForm(r, preset = {}) {
-    const isNew = !r; r = r || Object.assign({ Stage: "Contacted", Temperature: "Warm", "Service Line": "Contract Staffing", Source: "Direct Outreach", "Qualified?": "N" }, preset);
+    const isNew = !r; r = r || Object.assign({ Stage: "Contacted", Temperature: "Warm", "Service Line": "Contract Staffing", Source: "Direct Outreach" }, preset);
     const html = `
       ${field("Account *", "Account", r.Account, "text", 'list="accts" autocomplete="off"')}${datalist("accts", deals().map((d) => d.Account).concat(live("targets").map((t) => t.Account)))}
       <div class="f2">${field("Contact *", "Contact", r.Contact)}${field("Designation", "Designation", r.Designation)}</div>
@@ -885,7 +883,7 @@
       <div class="f2">${field("City", "City", r.City)}${select("Source", "Source", L("Source"), r.Source)}</div>
       <div class="f2">${select("Service line", "Service Line", L("Service"), r["Service Line"])}${select("Stage", "Stage", L("Stage"), r.Stage, false)}</div>
       <div class="f"><label>Temperature</label>${chips("Temperature", L("Temp"), r.Temperature)}</div>
-      <div class="f2">${select("Qualified?", "Qualified?", ["Y", "N"], r["Qualified?"])}${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}</div>
+      <div class="f">${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}</div>
       <div class="f2">${field("Est. headcount", "Est. Headcount", r["Est. Headcount"], "number", 'inputmode="numeric"')}${field("Est. billing (₹ lakhs / month)", "billL", isNum(r["Est. Monthly Billing (INR)"]) ? r["Est. Monthly Billing (INR)"] / 1e5 : "", "number", 'step="0.1" inputmode="decimal"')}</div>
       <div class="f"><label>Next step</label>
         <select id="nextsel2"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? `<option selected>${esc(r["Next Step"])}</option>` : ""}<option value="__other">Other (type your own)…</option></select>
@@ -901,9 +899,8 @@
         const f = form(el);
         if (!f.Account || !f.Contact) return toast("Account and contact are required", "warn");
         const v = { Account: f.Account, Contact: f.Contact, Designation: f.Designation, Phone: f.Phone, Email: f.Email, City: f.City, Source: f.Source,
-          "Service Line": f["Service Line"], Stage: f.Stage, Temperature: chipVal(el, "Temperature"), "Qualified?": f["Qualified?"], Blocker: f.Blocker,
+          "Service Line": f["Service Line"], Stage: f.Stage, Temperature: chipVal(el, "Temperature"), Blocker: f.Blocker,
           "Est. Headcount": f["Est. Headcount"], "Est. Monthly Billing (INR)": f.billL === "" ? "" : Math.round(f.billL * 1e5), "Next Step": f["Next Step"], "Next Step Date": f["Next Step Date"], Notes: f.Notes, Links: f.Links };
-        if (v["Qualified?"] === "Y" && !isNum(r["Qualified Date"])) v["Qualified Date"] = today();
         if (isNew) { v["Deal ID"] = nextDealId(); v.Owner = C.owner; v["Last Contact"] = preset["Last Contact"] || ""; API.add("pipeline", v); ttAutoDeal(v); close(); toast("Added " + v.Account); location.hash = "#/deal/" + encodeURIComponent(v["Deal ID"]); }
         else { API.update("pipeline", r, v); ttAutoDeal(r); close(); toast("Saved"); render(); }
       };
@@ -1194,7 +1191,7 @@
           const f = form(el); if (!f.Name || !f.Organization) return toast("Name and organization are required", "warn");
           const v = { Event: f.Event, Name: f.Name, Organization: f.Organization, Location: f.Location, Designation: f.Designation, Response: chipVal(el, "resp"), Comments: f.Comments, Links: f.Links, Email: f.Email, Phone: f.Phone, "Last Follow-up": today() };
           API.add("leads", v); localStorage.setItem("pp.lastEvent", f.Event);
-          if (f.topipe) API.add("pipeline", { "Deal ID": nextDealId(), Account: f.Organization, Contact: f.Name, Designation: f.Designation, City: f.Location, Source: f.Event, "Service Line": "Contract Staffing", Stage: "Contact Established", Temperature: v.Response === "Positive" ? "Warm" : "Cool", "Qualified?": "N", "Last Contact": today(), "Next Step": "Follow up after event", "Next Step Date": D.addBiz(today(), 2), Notes: f.Comments, Email: f.Email, Phone: f.Phone, Owner: C.owner });
+          if (f.topipe) API.add("pipeline", { "Deal ID": nextDealId(), Account: f.Organization, Contact: f.Name, Designation: f.Designation, City: f.Location, Source: f.Event, "Service Line": "Contract Staffing", Stage: "Contact Established", Temperature: v.Response === "Positive" ? "Warm" : "Cool", "Last Contact": today(), "Next Step": "Follow up after event", "Next Step Date": D.addBiz(today(), 2), Notes: f.Comments, Email: f.Email, Phone: f.Phone, Owner: C.owner });
           toast("Lead saved"); render();
         };
         $("#scan", el).onchange = (e) => scanCard(e.target.files[0], el);
@@ -1294,8 +1291,7 @@
     deals() {
       const t = today(), nw = setting("NewWindow", 14), mm = setting("MarginMin", 0.25);
       const ds = deals().map((r) => ({ r, x: deal(r) })).filter((d) => d.x.open);
-      const newQ = ds.filter(({ r }) => r["Qualified?"] === "Y" && isNum(r["Qualified Date"]) && r["Qualified Date"] >= t - nw);
-      const top = ds.filter((d) => !newQ.includes(d)).sort((a, b) => b.x.score - a.x.score).slice(0, 8);
+      const top = ds.slice().sort((a, b) => b.x.score - a.x.score).slice(0, 10);
       const clients = live("accounts").filter((a) => a["Account Type"] === "Client in Progress");
       const ms = live("meetings");
       const held = ms.filter((m) => m.Status === "Held" && isNum(m.Date) && m.Date >= t - nw && m.Date <= t);
@@ -1306,9 +1302,8 @@
       const commits = live("commitments").filter((c) => ["Proposed", "Committed"].includes(c.Status)).sort((a, b) => (a["Due Date"] || 9e9) - (b["Due Date"] || 9e9)).slice(0, 3);
       const dl = (r) => "#/deal/" + encodeURIComponent(r["Deal ID"]);
       return [
-        { t: "Pipeline", q: "New qualified opportunities, top deals and what blocks each", h:
-          `<div style="display:flex;gap:20px;margin-bottom:8px"><div><div class="big-n">${ds.length}</div><div class="hint">open</div></div><div><div class="big-n">${ds.filter((d) => d.r["Qualified?"] === "Y").length}</div><div class="hint">qualified</div></div><div><div class="big-n">${newQ.length}</div><div class="hint">new qualified (${nw}d)</div></div></div>
-          ${newQ.map(({ r }) => row(`🆕 ${esc(r.Account)} - ${esc(r.Contact)}`, esc(r["Next Step"] || ""), dl(r))).join("")}
+        { t: "Pipeline", q: "Top open deals and what blocks each", h:
+          `<div style="display:flex;gap:20px;margin-bottom:8px"><div><div class="big-n">${ds.length}</div><div class="hint">open</div></div><div><div class="big-n">${ds.filter((d) => d.r.Temperature === "Hot").length}</div><div class="hint">hot</div></div></div>
           ${top.map(({ r, x }) => row(`${tempDot(r.Temperature)} ${esc(r.Account)} <span class="chip stage">${esc(r.Stage)}</span>`, `${esc(r["Next Step"] || "No next step")} ${isNum(r["Next Step Date"]) ? "· " + D.fmt(r["Next Step Date"]) : ""}${r.Blocker ? ` · <b style="display:inline;color:var(--bad)">Blocker: ${esc(r.Blocker)}</b>` : ""}`, dl(r))).join("")}` },
         { t: "Clients in progress", q: "Stage and next step with a date (meeting, empanelment, MSA, first requirement)", h:
           clients.map((a) => row(`${esc(a.Account)} <span class="chip stage">${esc(a["Current Stage"])}</span>`, `${esc(a["Next Step"] || "No next step")} · ${isNum(a["Next Step Date"]) ? D.fmt(a["Next Step Date"]) : '<b style="display:inline;color:#B7791F">no date</b>'} · Empanelment ${esc(a.Empanelment || "-")} · MSA ${esc(a.MSA || "-")}`, "#/clients/" + encodeURIComponent(a.Account))).join("") || none("No clients in progress") },
@@ -1647,7 +1642,6 @@
       x.follow === "No next step" ? "NO next step" : x.follow + (isNum(r["Next Step Date"]) ? " " + D.fmt(r["Next Step Date"], { abs: 1 }) : ""),
       x.days != null ? x.days + "d since contact" : "never contacted",
       r["Est. Monthly Billing (INR)"] ? fmtL(r["Est. Monthly Billing (INR)"]) + "/mo" : "",
-      r["Qualified?"] === "Y" ? "qualified" : "",
       r["Service Line"] || "", r.City || "",
       r.Blocker ? "BLOCKER: " + r.Blocker : "",
       r["Next Step"] ? "next: " + r["Next Step"] : "",
@@ -1728,7 +1722,7 @@
     const libs = live("library").slice(0, 14).map((l) => `${l.Title || l.Category || "?"}${l.Type ? " [" + l.Type + "]" : ""}${l.Tags ? " (" + l.Tags + ")" : ""}${l.Link ? " " + l.Link : ""}`);
     const lines = [
       `DEAL: ${r.Account} — ${r.Contact || ""}${r.Designation ? " (" + r.Designation + ")" : ""}${r.City ? ", " + r.City : ""}`,
-      `Stage: ${r.Stage} | Temp: ${r.Temperature || "?"} | Service: ${r["Service Line"] || "?"} | Qualified: ${r["Qualified?"] === "Y" ? "Yes" : "No"}`,
+      `Stage: ${r.Stage} | Temp: ${r.Temperature || "?"} | Service: ${r["Service Line"] || "?"}`,
       `Est HC: ${r["Est. Headcount"] || "?"} | Est billing: ${fmtL(r["Est. Monthly Billing (INR)"]) || "?"}/mo | Source: ${r.Source || "?"}`,
       `Follow-up: ${x.follow}${isNum(r["Next Step Date"]) ? " (" + D.fmt(r["Next Step Date"], { abs: 1 }) + ")" : ""} | Last contact: ${x.days != null ? x.days + "d ago" : "never"}`,
       `Current next step: ${r["Next Step"] || "(none set)"}`,

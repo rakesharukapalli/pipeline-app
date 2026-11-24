@@ -100,6 +100,11 @@
         else { const out = []; for (const v of vals) { if (v === "" || v == null) break; out.push(v); } lists[name] = out; }
       });
     }
+    // "Qualified" stage removed per user preference. Drop it from the Stage list and its parallel
+    // StageProb entry so it never appears as an option anywhere in the app. (Any existing deals
+    // still carrying Stage "Qualified" keep their value; they just won't show it as a step.)
+    const qi = Array.isArray(lists.Stage) ? lists.Stage.indexOf("Qualified") : -1;
+    if (qi >= 0) { lists.Stage.splice(qi, 1); if (Array.isArray(lists.StageProb) && lists.StageProb.length > qi) lists.StageProb.splice(qi, 1); }
     return { tables, settings, lists };
   }
   function adopt(p) {
