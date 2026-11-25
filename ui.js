@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v49";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v50";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -238,7 +238,10 @@
     return ttState;
   }
   function ttAutoPull(force) {
-    if (B.demo || ttPaused() || !ttState.connected) return;
+    // Auto-pull is gated by the SAME toggle as auto-push. When TickTick is manual (the default),
+    // the app never auto-pulls — so an edit you make directly in the sheet is NEVER overwritten by
+    // a stale TickTick due date. (Use the "Sync from TickTick" button to pull on demand.)
+    if (B.demo || ttPaused() || !ttAutoOn() || !ttState.connected) return;
     const now = Date.now(); if (!force && now - ttLastPull < 45000) return;
     ttLastPull = now; ttPullAll(null, true);
   }
@@ -819,7 +822,7 @@
   };
 
   // ---------------- LOG TOUCH
-  const OUTCOMES = ["No answer", "Call Busy", "Connected", "Replied", "Meeting booked", "Requirement shared", "Call back later", "Not interested"];
+  const OUTCOMES = ["No answer", "Call Busy", "Connected", "Replied", "Meeting booked", "Requirement shared", "Call back later", "Not interested", "Others"];
   const NEXT_SUGGEST = ["Follow-up call", "Send capability deck", "Send rate card", "Share profiles", "Book meeting", "Proposal follow-up", "Check-in next quarter"];
   const CH_MAP = { Call: "Cold Call", WhatsApp: "Cold Call", Email: "Email", LinkedIn: "LinkedIn" };
   // ---- ONE unified "Update" sheet: the single place to log a contact AND update any detail.
@@ -828,11 +831,11 @@
     const billL = isNum(r["Est. Monthly Billing (INR)"]) ? r["Est. Monthly Billing (INR)"] / 1e5 : "";
     const html = `
       <div class="f"><label>Mode of contact *</label>${chips("ch", ["Call", "WhatsApp", "Email", "LinkedIn", "Meeting"], preset.ch || "Call")}</div>
-      <div class="f"><label>Outcome / response *</label>${chips("oc", OUTCOMES, preset.oc || "")}</div>
+      <div class="f"><label>Outcome / response <span class="hint">(optional)</span></label>${chips("oc", OUTCOMES, preset.oc || "")}</div>
       ${field("When did this happen? *", "cdate", t, "date")}
       <div id="mtgbox" class="hidden"><div class="f2">${field("Meeting date", "mdate", "", "date")}${field("Time", "mtime", "11:00", "time")}</div>
         <div class="f"><label>With decision maker?</label>${chips("mdm", ["Y", "N"], "Y")}</div></div>
-      ${field("Notes — what they said / response *", "notes", "", "textarea", 'placeholder="What happened? Need, timeline, budget, who decides..."')}
+      ${field("Notes — what they said (optional)", "notes", "", "textarea", 'placeholder="What happened? Need, timeline, budget, who decides..."')}
       <div class="f"><label>Next step</label>
         <select name="nextsel" id="nextsel"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? `<option selected>${esc(r["Next Step"])}</option>` : ""}<option value="__other">Other (type your own)…</option></select>
         <input name="next" id="nextinput" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="hidden" style="margin-top:6px"></div>
@@ -870,17 +873,16 @@
       });
       $("#save", el).onclick = () => {
         const f = form(el); const ch = chipVal(el, "ch") || "Call"; const oc = chipVal(el, "oc");
-        // Mandatory fields, with friendly messages
-        if (!oc) return toast("Pick the outcome / response", "warn");
+        // Outcome and note are OPTIONAL now. Next follow-up date stays required (unless Not interested),
+        // since the follow-up discipline depends on it.
         const cd = isNum(f.cdate) ? f.cdate : t;
         const noAnswer = ["No answer", "Call Busy"].includes(oc);
-        if (!f.notes && !noAnswer) return toast("Add a quick note on what they said", "warn");
         let nd = f.ndate;
         if (oc === "Meeting booked" && isNum(f.mdate) && !nd) nd = f.mdate;
         if (!isNum(nd) && oc !== "Not interested") return toast("Set the next follow-up date", "warn");
         const temp = chipVal(el, "temp") || r.Temperature;
         const stamp = D.toJS(cd).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
-        const noteLine = `${stamp}: ${ch} - ${oc}${f.notes ? " - " + f.notes : ""}`;
+        const noteLine = `${stamp}: ${ch}${oc ? " - " + oc : ""}${f.notes ? " - " + f.notes : ""}`;
         const changes = { "Last Contact": cd, "Next Step": f.next, "Next Step Date": nd || "", Temperature: temp, Stage: f.stage, Notes: (noteLine + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500) };
         // "More details" fields — only the ones the user actually changed get written (API.update drops unchanged).
         changes.Blocker = f.Blocker; changes["Service Line"] = f["Service Line"]; changes.Designation = f.Designation; changes.City = f.City;
@@ -894,7 +896,7 @@
         const oc_ch = CH_MAP[ch];
         if (oc_ch) {
           API.inc(oc_ch, "Activities", 1);
-          if (!noAnswer) API.inc(oc_ch, "Responses", 1);
+          if (oc && !noAnswer && oc !== "Others") API.inc(oc_ch, "Responses", 1);
           if (oc === "Meeting booked") API.inc(oc_ch, "Meetings Booked", 1);
         }
         if (oc === "Meeting booked" && isNum(f.mdate)) {
@@ -1892,7 +1894,7 @@
       mount: (el) => {
         $('.chips[data-name="theme"]', el).addEventListener("pick", (e) => { const v = e.detail; if (v) { localStorage.setItem("pp.theme", v); document.documentElement.setAttribute("data-theme", v); } else { localStorage.removeItem("pp.theme"); document.documentElement.removeAttribute("data-theme"); } });
         const box = $("#ttbox", el);
-        const autoRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttauto" ${ttAutoOn() ? "checked" : ""}> Auto-send follow-ups to TickTick on every save <span class="hint">(off = fastest; TickTick updates only when you tap the TickTick button)</span></label>`;
+        const autoRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttauto" ${ttAutoOn() ? "checked" : ""}> Auto-sync with TickTick (push on save + pull on open) <span class="hint">(off = fastest &amp; safest: your sheet edits are never overwritten by TickTick. Use the buttons above to sync on demand.)</span></label>`;
         const pauseRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpause" ${ttPaused() ? "checked" : ""}> Pause ALL TickTick sync (push & pull)</label>`;
         const wirePause = () => {
           const p = $("#ttpause", el); if (p) p.onchange = () => { try { localStorage.setItem("pp.ttpause", p.checked ? "1" : "0"); } catch (e) {} toast(p.checked ? "TickTick paused" : "TickTick resumed"); };
@@ -1904,7 +1906,7 @@
           if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)' + pauseRow(); wirePause(); return; }
           if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>` + pauseRow(); wirePause(); return; }
           const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
-          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. ${ttAutoOn() ? "<b>Sales / pipeline & commitment</b> follow-ups auto-sync to TickTick." : "Auto-send is <b>off</b> — your sheet saves stay fast; tap the TickTick button on a lead, or <b>Push all</b> below, to send."} Delivery is kept separate — it never goes to TickTick.</p>
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. ${ttAutoOn() ? "<b>Auto-sync is ON</b> — follow-ups push on save and pull on open." : "<b>Auto-sync is off</b> (recommended) — your sheet saves stay fast and your sheet edits are never overwritten. Use the buttons below to sync on demand."} Delivery is kept separate — it never goes to TickTick.</p>
             <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>${autoRow()}${pauseRow()}`;
           $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
           $("#ttpull", el).onclick = () => ttPullAll($("#ttpull", el));
