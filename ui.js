@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v48";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v49";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -524,9 +524,10 @@
     const pipeHref = dashScope === "core" ? "#/pipeline?seg=core" : "#/pipeline";
     const actionable = ds.filter(({ r, x }) => x.open || r.Stage === "Nurture");
     const overdue = actionable.filter(({ x }) => x.follow === "Overdue").sort((a, b) => (b.x.score - a.x.score));
-    const dueToday = actionable.filter(({ x }) => x.follow === "Due today").sort((a, b) => b.x.score - a.x.score);
     const noNext = ds.filter(({ r, x }) => x.open && x.follow === "No next step" && (r.Temperature === "Hot" || r.Temperature === "Warm")).sort((a, b) => b.x.score - a.x.score);
-    const week = ds.filter(({ x }) => x.open && x.follow === "This week").sort((a, b) => a.r["Next Step Date"] - b.r["Next Step Date"]);
+    // Forward follow-up buckets by next-step date (non-overlapping), soonest first.
+    const inRange = (lo, hi) => ds.filter(({ r, x }) => x.open && isNum(r["Next Step Date"]) && r["Next Step Date"] >= lo && r["Next Step Date"] <= hi).sort((a, b) => a.r["Next Step Date"] - b.r["Next Step Date"]);
+    const bToday = inRange(t, t), bTom = inRange(t + 1, t + 1), bWeek = inRange(t + 2, t + 7), bFort = inRange(t + 8, t + 14), bMonth = inRange(t + 15, t + 30), bQtr = inRange(t + 31, t + 90);
     const ms = live("meetings");
     const upcoming = ms.filter((m) => isNum(m.Date) && m.Date >= t && m.Date <= t + 7 && ["Booked", "To confirm"].includes(m.Status)).sort((a, b) => a.Date - b.Date);
     const closeOut = ms.filter((m) => isNum(m.Date) && m.Date < t && ["Booked", "To confirm"].includes(m.Status));
@@ -568,28 +569,31 @@
         <button class="kpi" data-go="${pipeHref}"><div class="v">${ds.filter((d) => d.x.open).length}</div><div class="l">Open deals</div></button>
         <button class="kpi" data-go="${pipeHref}${dashScope === "core" ? "&" : "?"}temp=Hot"><div class="v">${hot}</div><div class="l">Hot</div></button>
         <button class="kpi ${overdue.length ? "bad" : ""}" data-scroll="sec-over"><div class="v">${overdue.length}</div><div class="l">Overdue</div></button>
-        <button class="kpi ${noNext.length ? "warn" : ""}" data-scroll="sec-nonext"><div class="v">${noNext.length}</div><div class="l">No next step</div></button>
+        <button class="kpi ${noNext.length ? "warn" : ""}" data-go="${pipeHref}${dashScope === "core" ? "&" : "?"}follow=No next step"><div class="v">${noNext.length}</div><div class="l">No next step</div></button>
       </div>
       <div class="card" data-go="#/outreach" style="cursor:pointer">
         <div style="display:flex;justify-content:space-between;align-items:center"><b>Outreach this week</b><span class="chip">${Math.round(100 * (out.Email.a + out["Cold Call"].a + out.LinkedIn.a) / Math.max(1, emailT + callsTarget + liT))}% of target</span></div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;font-size:13px">
           ${[["Email", emailT], ["Cold Call", callsTarget], ["LinkedIn", liT]].map(([c, tg]) => `<div><div style="color:var(--ink-3)">${c === "Cold Call" ? "Calls" : c}</div><b>${out[c].a}</b> / ${tg}<div class="bar"><i style="width:${Math.min(100, (100 * out[c].a) / Math.max(1, tg))}%"></i></div></div>`).join("")}
         </div></div>
-      ${sectionRows("⭐ Recent traction (positive replies & meetings)", traction.slice(0, 15).map(tractionRow), "ok")}
+      ${sectionRows("Recent tractions", traction.slice(0, 15).map(tractionRow), "ok")}
       <div id="sec-over">${sectionRows("Overdue follow-ups", overdue.map(dealRow), "bad")}</div>
-      ${sectionRows("Due today", dueToday.map(dealRow), "warn")}
+      ${sectionRows("Due today", bToday.map(dealRow), "warn")}
+      ${sectionRows("Tomorrow", bTom.map(dealRow))}
+      ${sectionRows("This week", bWeek.map(dealRow))}
+      ${sectionRows("Next fortnight", bFort.map(dealRow))}
+      ${sectionRows("This month", bMonth.map(dealRow))}
+      ${sectionRows("This quarter", bQtr.map(dealRow))}
       ${section("Meetings - next 7 days", upcoming.map(meetCard))}
       ${section("Meetings to close out", closeOut.map(meetCard), "warn")}
-      <div id="sec-nonext">${sectionRows("Hot & warm - no next step", noNext.map(dealRow), "warn")}</div>
       ${section("Clients in progress - needs a next step", clients.map(accCard), "warn")}
-      ${sectionRows("Coming up this week", week.map(dealRow))}
       ${section("Your commitments", commits.slice(0, 5).map(commitCard))}
-      ${section("Needs your approval (below margin)", approvals.map(propCard), "bad")}
-      ${section("Logo incentive watch", inc.map(accCard))}
       ${dDue.length || dIv.length ? `<div class="sec"><h2>Delivery</h2><a href="#/delivery" style="font-size:12px;font-weight:600">Open ›</a></div>` : ""}
       ${section("Delivery - interviews this week", dIv.map(dCandCard))}
       ${section("Delivery - follow-ups due", dDue.map(dCandCard), "warn")}
-      ${!overdue.length && !dueToday.length && !noNext.length && !upcoming.length && !dDue.length && !dIv.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
+      ${section("Needs your approval (below margin)", approvals.map(propCard), "bad")}
+      ${section("Logo incentive watch", inc.map(accCard))}
+      ${!overdue.length && !bToday.length && !bTom.length && !upcoming.length && !dDue.length && !dIv.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
     return { title: dashScope === "core" ? "Pipeline" : "Today", html, mount: mountScope };
   };
 
