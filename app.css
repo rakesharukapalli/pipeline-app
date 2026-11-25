@@ -286,6 +286,16 @@ table.mini td.n{text-align:right;font-variant-numeric:tabular-nums}
 .filters>summary{cursor:pointer;font-weight:800;font-size:13px;list-style:none;padding:3px 0}
 .filters>summary::-webkit-details-marker{display:none}
 .filters>summary::before{content:"⚲ ";opacity:.6}
+.lrows{padding:0;overflow:hidden}
+.lrow{display:flex;align-items:center;gap:9px;padding:10px 12px;border-top:1px solid var(--line);cursor:pointer}
+.lrow:first-child{border-top:0}
+.lrow .lmain{flex:1;min-width:0}
+.lrow .lt1{font-weight:800;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lrow .lmeta{font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.lrow .lright{display:flex;align-items:center;gap:7px;flex:none}
+.lrow .lwhen{font-size:11px;font-weight:700;color:var(--ink-3);flex:none;white-space:nowrap}
+.lrow .lbtn{border:2px solid var(--b);border-radius:10px;color:#141414;background:linear-gradient(#FFD23B,#EFA000);padding:6px 8px;flex:none;display:flex;align-items:center;cursor:pointer}
+.lrow .lbtn svg{width:15px;height:15px}
 .moredetails{margin:4px 0 10px;border:2px dashed var(--line);border-radius:12px;padding:8px 12px}
 .moredetails>summary{cursor:pointer;font-weight:800;font-size:13px;color:var(--ink-2);list-style:none;padding:3px 0}
 .moredetails>summary::-webkit-details-marker{display:none}

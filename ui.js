@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v47";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v48";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -357,6 +357,22 @@
     } catch (e) { return "Link"; }
   }
   const linkChips = (arr) => (arr.length ? `<div class="chips" style="gap:6px;flex-wrap:wrap;margin-top:2px">${arr.map((u) => `<a class="chip" href="${esc(u)}" target="_blank" rel="noopener">${I.link} ${esc(linkLabel(u))}</a>`).join("")}</div>` : "");
+  // Upload a file attachment to Drive (via the backend), then append its link to a Links textarea.
+  function fileToB64(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(file); }); }
+  async function uploadAttach(file, ta) {
+    if (!file) return;
+    if (file.size > 12e6) return toast("File too large (max ~12 MB)", "warn");
+    if (B.demo) return toast("File upload works on your live app (not in demo)", "warn");
+    if (!B.rpc) return toast("Needs the Google Sheets backend", "warn");
+    toast("Uploading " + file.name + "…");
+    try {
+      const dataBase64 = await fileToB64(file);
+      const r = await B.rpc("attach", { filename: file.name, mimeType: file.type, dataBase64 });
+      if (r && r.error) throw new Error(r.error);
+      if (ta) ta.value = (ta.value ? ta.value.trim() + "\n" : "") + r.url;
+      toast("Attached ✓ " + (r.name || file.name));
+    } catch (e) { toast("Upload failed: " + (e.message || e), "warn"); }
+  }
 
   // ------------------------------------------------------------------ toast / sheet
   let toastT;
@@ -467,6 +483,21 @@
     const k = "pp.sec." + title; let open = true; try { open = localStorage.getItem(k) !== "0"; } catch (e) {}
     return `<details class="secwrap" data-seck="${esc(k)}" ${open ? "open" : ""}><summary class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${items.length}</span><span class="secchev">▾</span></summary>${body}</details>`;
   }
+  // Compact one-line row for a deal (used on dashboards for an at-a-glance list).
+  function dealRow(d) {
+    const r = d.r, x = d.x;
+    return `<div class="lrow" data-go="#/deal/${encodeURIComponent(r["Deal ID"])}">
+      ${tempDot(r.Temperature)}
+      <div class="lmain"><div class="lt1">${esc(r.Account)}${r._pending ? ' <span class="pend">•</span>' : ""}</div>
+        <div class="lmeta">${esc(r.Stage || "")}${r["Next Step"] ? " · " + esc(r["Next Step"]) : ""}${r.Blocker ? " · ⚠ " + esc(r.Blocker) : ""}</div></div>
+      <div class="lright">${followChip(x.follow, r["Next Step Date"])}<button class="lbtn" data-act="log" data-id="${esc(r["Deal ID"])}" aria-label="Update">${I.log}</button></div></div>`;
+  }
+  // Compact section whose items are rows inside one card (not big blocks).
+  function sectionRows(title, rows, cls = "") {
+    if (!rows.length) return "";
+    const k = "pp.sec." + title; let open = true; try { open = localStorage.getItem(k) !== "0"; } catch (e) {}
+    return `<details class="secwrap" data-seck="${esc(k)}" ${open ? "open" : ""}><summary class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${rows.length}</span><span class="secchev">▾</span></summary><div class="card lrows">${rows.join("")}</div></details>`;
+  }
   function meetCard(m) {
     const past = isNum(m.Date) && m.Date < today();
     return `<div class="card deal" data-act="meeting" data-sig='${esc(m._sig)}'>
@@ -509,6 +540,22 @@
     const dDue = dAll.filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]) && c["Next Follow-up"] <= t).sort((a, b) => a["Next Follow-up"] - b["Next Follow-up"]);
     const dIv = dAll.filter((c) => dActive(c.Status) && isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7).sort((a, b) => a["Interview Date"] - b["Interview Date"]);
     const agenda = agendaKey();
+    // ---- Recent traction: accounts/leads with a POSITIVE recent outcome (progress at a glance)
+    const scopeAccts = new Set(ds.map((d) => d.r.Account));
+    const POS = /connected|replied|meeting|requirement shared|positive|interested|proposal|shortlist|selected|advanced/i;
+    const NEG = /not interested|no answer|call busy|busy|declined|lost|reject/i;
+    const tmap = {};
+    live("activity").filter((a) => isNum(a.Date) && a.Date >= t - 14 && a.Outcome && POS.test(a.Outcome) && !NEG.test(a.Outcome))
+      .sort((a, b) => (a.Date || 0) - (b.Date || 0))
+      .forEach((a) => { const k = a.Account || a["Deal ID"] || ""; if (!k) return; if (dashScope !== "all" && !scopeAccts.has(a.Account)) return; tmap[k] = { name: a.Account || a["Deal ID"], outcome: a.Outcome, note: a.Notes, date: a.Date, go: a["Deal ID"] ? "#/deal/" + encodeURIComponent(a["Deal ID"]) : "" }; });
+    const traction = Object.values(tmap);
+    live("leads").filter((l) => /positive/i.test(l.Response || "") && isNum(l["Last Follow-up"]) && l["Last Follow-up"] >= t - 14)
+      .forEach((l) => traction.push({ name: (l.Name || l.Organization || "lead") + (l.Organization && l.Name ? " · " + l.Organization : ""), outcome: "Positive (lead)", note: l.Comments, date: l["Last Follow-up"], go: "#/leads" }));
+    traction.sort((a, b) => (b.date || 0) - (a.date || 0));
+    const tractionRow = (x) => `<div class="lrow" ${x.go ? `data-go="${x.go}"` : ""}>
+      <span class="dotT Hot" style="flex:none"></span>
+      <div class="lmain"><div class="lt1">${esc(x.name)}</div><div class="lmeta">✅ ${esc(x.outcome)}${x.note ? " · " + esc(String(x.note).slice(0, 70)) : ""}</div></div>
+      <span class="lwhen">${esc(D.fmt(x.date, { abs: 1 }))}</span></div>`;
     const hot = ds.filter(({ r, x }) => x.open && r.Temperature === "Hot").length;
     const out = outreachWeek(D.weekStart(t));
     const callsTarget = setting("T_Call", 50), emailT = setting("T_Email", 100), liT = setting("T_LinkedIn", 50);
@@ -528,13 +575,14 @@
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;font-size:13px">
           ${[["Email", emailT], ["Cold Call", callsTarget], ["LinkedIn", liT]].map(([c, tg]) => `<div><div style="color:var(--ink-3)">${c === "Cold Call" ? "Calls" : c}</div><b>${out[c].a}</b> / ${tg}<div class="bar"><i style="width:${Math.min(100, (100 * out[c].a) / Math.max(1, tg))}%"></i></div></div>`).join("")}
         </div></div>
-      <div id="sec-over">${section("Overdue follow-ups", overdue.map((d) => dealCard(d.r)), "bad")}</div>
-      ${section("Due today", dueToday.map((d) => dealCard(d.r)), "warn")}
+      ${sectionRows("⭐ Recent traction (positive replies & meetings)", traction.slice(0, 15).map(tractionRow), "ok")}
+      <div id="sec-over">${sectionRows("Overdue follow-ups", overdue.map(dealRow), "bad")}</div>
+      ${sectionRows("Due today", dueToday.map(dealRow), "warn")}
       ${section("Meetings - next 7 days", upcoming.map(meetCard))}
       ${section("Meetings to close out", closeOut.map(meetCard), "warn")}
-      <div id="sec-nonext">${section("Hot & warm - no next step", noNext.map((d) => dealCard(d.r)), "warn")}</div>
+      <div id="sec-nonext">${sectionRows("Hot & warm - no next step", noNext.map(dealRow), "warn")}</div>
       ${section("Clients in progress - needs a next step", clients.map(accCard), "warn")}
-      ${section("Coming up this week", week.map((d) => dealCard(d.r)))}
+      ${sectionRows("Coming up this week", week.map(dealRow))}
       ${section("Your commitments", commits.slice(0, 5).map(commitCard))}
       ${section("Needs your approval (below margin)", approvals.map(propCard), "bad")}
       ${section("Logo incentive watch", inc.map(accCard))}
@@ -566,9 +614,9 @@
         <button class="kpi" data-go="#/pipeline?seg=bf"><div class="v">${bf.length}</div><div class="l">Brownfield</div></button>
         <button class="kpi ${followDue ? "warn" : ""}" data-scroll="gcc-follow"><div class="v">${followDue}</div><div class="l">Follow-ups due</div></button>
       </div>
-      <div id="gcc-follow">${section("Follow-ups overdue", overdue.map((d) => dealCard(d.r)), "bad")}</div>
-      ${section("Due / this week", due.map((d) => dealCard(d.r)), "warn")}
-      ${section("Open · no next step", noNext.map((d) => dealCard(d.r)), "warn")}
+      <div id="gcc-follow">${sectionRows("Follow-ups overdue", overdue.map(dealRow), "bad")}</div>
+      ${sectionRows("Due / this week", due.map(dealRow), "warn")}
+      ${sectionRows("Open · no next step", noNext.map(dealRow), "warn")}
       ${ds.length ? `<div class="sec"><h2>By city</h2></div><div class="card">${Object.entries(byCity).sort((a, b) => b[1] - a[1]).map(([c, n]) => bar(c, n, maxCity)).join("")}</div>` : ""}
       ${ds.length ? `<div class="sec"><h2>By stage</h2></div><div class="card">${L("Stage").filter((s) => byStage[s]).map((s) => bar(s, byStage[s], maxStage)).join("") || Object.entries(byStage).map(([s, n]) => bar(s, n, maxStage)).join("")}</div>` : ""}
       ${ds.length ? `<div class="sec"><h2>Headcount intelligence</h2><span class="count">${ds.length}</span></div>
@@ -726,7 +774,6 @@
         <div><div style="font-size:12px;color:var(--ink-3)">NEXT STEP</div><div style="font-weight:650;margin-top:2px">${esc(r["Next Step"] || "No next step set")}</div>
         <div style="margin-top:6px">${followChip(x.follow, r["Next Step Date"])} ${r.Blocker ? `<span class="chip">Blocker: ${esc(r.Blocker)}</span>` : ""}</div></div>
         </div></div>
-      ${aiOn() ? `<button class="btn pri block" id="aimove" style="margin-bottom:10px">✨ Suggest next move</button><div id="aimoveout"></div>` : ""}
       <div class="card"><div style="font-size:12px;color:var(--ink-3);margin-bottom:6px">STAGE</div>
         <div class="stepper">${stages.map((s, i) => `<button data-act="stage" data-id="${esc(r["Deal ID"])}" data-v="${esc(s)}" class="${s === r.Stage ? "on" : i < si && !["Nurture", "Lost"].includes(r.Stage) ? "done" : ""}">${esc(s)}</button>`).join("")}</div>
         <div style="font-size:12px;color:var(--ink-3);margin:8px 0 6px">TEMPERATURE</div>
@@ -754,7 +801,8 @@
         const head = tl.slice(0, 4), rest = tl.slice(4);
         return `<div class="tl">${head.map(item).join("")}</div>${rest.length ? `<details class="tlmore"><summary>Show ${rest.length} older</summary><div class="tl">${rest.map(item).join("")}</div></details>` : ""}`;
       })()}</div>
-      ${others.length ? `<div class="sec"><h2>Other contacts at ${esc(r.Account)}</h2><span class="count">${others.length}</span></div>${others.map((o) => dealCard(o, { noActs: true })).join("")}` : ""}`;
+      ${others.length ? `<div class="sec"><h2>Other contacts at ${esc(r.Account)}</h2><span class="count">${others.length}</span></div>${others.map((o) => dealCard(o, { noActs: true })).join("")}` : ""}
+      ${aiOn() ? `<button class="btn pri block" id="aimove" style="margin-top:12px">✨ Suggest next move</button><div id="aimoveout"></div>` : ""}`;
     return {
       title: r.Account, back: true, html, mount: (el) => {
         wireChips(el);
@@ -1179,8 +1227,9 @@
         <div class="f2">${field("Phone", "Phone", "", "tel")}${field("Email", "Email", "", "email")}</div>
         <div class="f"><label>Response</label>${chips("resp", L("Response"), "")}</div>
         ${field("What they said / need", "Comments", "", "textarea")}
-        ${field("Conversation links (doc / Outlook thread — one per line)", "Links", "", "textarea")}
-        <div class="toggle"><div><b>Also add to pipeline</b><div class="hint">Creates an opportunity with this event as source</div></div><input type="checkbox" name="topipe"></div>
+        ${field("Attachments & links (doc / Outlook thread / Drive — one per line)", "Links", "", "textarea")}
+        <label class="btn block" style="margin-top:-2px">${I.link} Upload a file (PDF, image, doc…)<input type="file" id="leadfile2" class="hidden"></label>
+        <div class="toggle" style="margin-top:8px"><div><b>Also add to pipeline</b><div class="hint">Creates an opportunity with this event as source</div></div><input type="checkbox" name="topipe"></div>
         <button class="btn pri block" id="saveLead">Save lead</button></div>
       ${section("Recent leads", recent.map((l) => `<div class="card deal"><div class="main"><div class="t1"><span>${esc(l.Name)}</span></div><div class="t2">${esc(l.Organization)}${l.Designation ? " · " + esc(l.Designation) : ""}</div>
         <div class="meta"><span class="chip">${esc(l.Event)}</span>${l.Response ? `<span class="chip ${l.Response === "Positive" ? "ok" : ""}">${esc(l.Response)}</span>` : ""}${deals().some((d) => d.Account === l.Organization) ? '<span class="chip stage">In pipeline</span>' : `<button class="btn" data-act="lead2pipe" data-sig='${esc(l._sig)}'>→ Pipeline</button>`}<button class="btn" data-act="editlead" data-sig='${esc(l._sig)}'>Edit / links</button></div>
@@ -1195,6 +1244,7 @@
           toast("Lead saved"); render();
         };
         $("#scan", el).onchange = (e) => scanCard(e.target.files[0], el);
+        const lf2 = $("#leadfile2", el); if (lf2) lf2.onchange = (e) => uploadAttach(e.target.files[0], $('[name="Links"]', el));
       } };
   };
   function leadEdit(l) {
@@ -1203,9 +1253,12 @@
       <div class="f2">${field("Phone", "Phone", l.Phone, "tel")}${field("Email", "Email", l.Email, "email")}</div>
       <div class="f"><label>Response</label>${chips("resp", L("Response"), l.Response)}</div>
       ${field("Notes / what they said", "Comments", l.Comments, "textarea")}
-      ${field("Conversation links (doc / Outlook thread — one per line)", "Links", l.Links, "textarea")}
-      <button class="btn pri block" id="save">Save</button>`, (el, close) => {
+      ${field("Attachments & links (doc / Outlook thread / Drive — one per line)", "Links", l.Links, "textarea")}
+      <label class="btn block" style="margin-top:-2px">${I.link} Upload a file (PDF, image, doc…)<input type="file" id="leadfile" class="hidden"></label>
+      ${l.Links ? `<div style="margin-top:6px">${linkChips(linkList(l.Links))}</div>` : ""}
+      <button class="btn pri block" id="save" style="margin-top:8px">Save</button>`, (el, close) => {
       wireChips(el);
+      const lf = $("#leadfile", el); if (lf) lf.onchange = (e) => uploadAttach(e.target.files[0], $('[name="Links"]', el));
       $("#save", el).onclick = () => {
         const f = form(el);
         API.update("leads", l, { Name: f.Name, Organization: f.Organization, Phone: f.Phone, Email: f.Email, Response: chipVal(el, "resp"), Comments: f.Comments, Links: f.Links });
