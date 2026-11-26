@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v50";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v51";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -434,7 +434,7 @@
   function datalist(id, values) { return `<datalist id="${id}">${[...new Set(values.filter(Boolean))].sort().map((v) => `<option value="${esc(v)}">`).join("")}</datalist>`; }
   const dateChips = (name, cur) => {
     const t = today();
-    const opts = [["Tomorrow", D.addBiz(t, 1)], ["+3 days", D.addBiz(t, 3)], ["Next Mon", D.nextMonday(t)], ["+1 week", t + 7], ["+2 weeks", t + 14], ["+1 month", t + 30]];
+    const opts = [["Today", t], ["Tomorrow", D.addBiz(t, 1)], ["+3 days", D.addBiz(t, 3)], ["Next Mon", D.nextMonday(t)], ["+1 week", t + 7], ["+2 weeks", t + 14], ["+1 month", t + 30]];
     return `<div class="chips" data-dates="${name}">${opts.map(([l, v]) => `<button type="button" class="pick" data-d="${v}">${l}</button>`).join("")}</div>
       <div class="f" style="margin-top:8px"><input type="date" name="${name}" value="${esc(isNum(cur) ? D.toISO(cur) : "")}"></div>`;
   };
@@ -486,13 +486,16 @@
     const k = "pp.sec." + title; let open = true; try { open = localStorage.getItem(k) !== "0"; } catch (e) {}
     return `<details class="secwrap" data-seck="${esc(k)}" ${open ? "open" : ""}><summary class="sec ${cls}"><h2>${esc(title)}</h2><span class="count">${items.length}</span><span class="secchev">▾</span></summary>${body}</details>`;
   }
-  // Compact one-line row for a deal (used on dashboards for an at-a-glance list).
+  // Strip a leading "26 Nov:" / "26-Nov:" date stamp from a note so the row shows just the content.
+  const noteSnippet = (s) => String(s || "").replace(/^\s*\d{1,2}[\s\-\/][A-Za-z]{3,}\s*[:\-]\s*/, "").replace(/\s+/g, " ").trim();
+  // Compact one-line row for a deal: Account · prospect, then the latest note (used on dashboards).
   function dealRow(d) {
-    const r = d.r, x = d.x;
+    const r = d.r, x = d.x, note = noteSnippet(r.Notes).slice(0, 80);
     return `<div class="lrow" data-go="#/deal/${encodeURIComponent(r["Deal ID"])}">
       ${tempDot(r.Temperature)}
-      <div class="lmain"><div class="lt1">${esc(r.Account)}${r._pending ? ' <span class="pend">•</span>' : ""}</div>
-        <div class="lmeta">${esc(r.Stage || "")}${r["Next Step"] ? " · " + esc(r["Next Step"]) : ""}${r.Blocker ? " · ⚠ " + esc(r.Blocker) : ""}</div></div>
+      <div class="lmain"><div class="lt1">${esc(r.Account)}${r.Contact ? ` <span class="lwho">· ${esc(r.Contact)}</span>` : ""}${r._pending ? ' <span class="pend">•</span>' : ""}</div>
+        <div class="lmeta">${esc(r.Stage || "")}${r["Next Step"] ? " · " + esc(r["Next Step"]) : ""}${r.Blocker ? " · ⚠ " + esc(r.Blocker) : ""}</div>
+        ${note ? `<div class="lnote">${esc(note)}</div>` : ""}</div>
       <div class="lright">${followChip(x.follow, r["Next Step Date"])}<button class="lbtn" data-act="log" data-id="${esc(r["Deal ID"])}" aria-label="Update">${I.log}</button></div></div>`;
   }
   // Compact section whose items are rows inside one card (not big blocks).
@@ -752,12 +755,14 @@
     const stages = L("Stage"); const si = stages.indexOf(r.Stage);
     const acts = live("activity").filter((a) => a["Deal ID"] === r["Deal ID"] || (!a["Deal ID"] && a.Contact === r.Contact && a.Account === r.Account));
     const ms = live("meetings").filter((m) => m.Account === r.Account && (!m.Contact || m.Contact === r.Contact));
-    const noteItems = String(r.Notes || "").trim()
+    // Legacy fallback: if this deal has NO Activity Log rows (older data), parse the Notes cell into
+    // timeline items. When Activity Log rows exist, the timeline comes entirely from them (no dupes).
+    const noteItems = acts.length ? [] : (String(r.Notes || "").trim()
       ? String(r.Notes).split(/\n+|\s\|\s/).map((s) => s.trim()).filter(Boolean).map((line) => {
           const m = line.match(/^(\d{1,2}[\s\-\/][A-Za-z]{3,}|\d{1,2}[\-\/]\d{1,2}(?:[\-\/]\d{2,4})?)\s*[:\-]\s*(.*)$/);
           return { d: isNum(r["Last Contact"]) ? r["Last Contact"] : today(), h: "<b>Note</b>", s: m ? (m[1] + " — " + m[2]) : line, note: 1 };
         })
-      : [];
+      : []);
     const tl = [...noteItems,
       ...acts.map((a) => ({ d: a.Date, h: `<b>${esc(a.Channel)}</b> · ${esc(a.Outcome)}`, s: [a.Notes, a["Next Step"] ? "Next: " + a["Next Step"] + (isNum(a["Next Step Date"]) ? " (" + D.fmt(a["Next Step Date"], { abs: 1 }) + ")" : "") : ""].filter(Boolean).join(" - ") })),
       ...ms.map((m) => ({ d: m.Date, h: `<b>Meeting</b> · ${esc(m.Status)}${m["Decision Maker?"] === "Y" ? " · DM" : ""}`, s: m["Outcome / Next Step"] }))]
@@ -767,7 +772,7 @@
     const ci = contactInfoFor(r), phone = ci.Phone, email = ci.Email;
     const tel = telLink(phone), wa = waLink(phone);
     const html = `
-      <div class="hero"><h2>${esc(r.Account)}</h2><div class="sub">${esc(r.Contact)}${r.Designation ? " · " + esc(r.Designation) : ""}${r.City ? " · " + esc(r.City) : ""}</div>
+      <div class="hero"><h2>${esc(r.Account)}</h2><div class="sub">${esc(r.Contact)}${r.Designation ? " · " + esc(r.Designation) : ""}${r.City ? " · " + esc(r.City) : ""}${r.Industry ? " · " + esc(r.Industry) : ""}</div>
         <div class="chips"><span class="chip">${esc(r.Stage)}</span><span class="chip">${esc(r.Temperature || "-")}</span><span class="chip">${esc(r["Service Line"] || "")}</span>${x.days != null ? `<span class="chip">Last touch ${x.days}d ago</span>` : ""}</div></div>
       <div class="quick">
         <a class="${tel ? "" : "dis"}" href="${tel || "#"}" data-act="call" data-id="${esc(r["Deal ID"])}">${I.call}Call</a>
@@ -790,8 +795,10 @@
         <button data-act="newmeeting" data-id="${esc(r["Deal ID"])}">${"Book meeting"}</button>
         <button data-act="newprop" data-id="${esc(r["Deal ID"])}">Proposal / rate card</button>
         <button data-act="newreq" data-id="${esc(r["Deal ID"])}">Requirement</button>
+        ${["Nurture", "Lost"].includes(r.Stage) ? `<button data-act="reactivate" data-id="${esc(r["Deal ID"])}">▶ Reactivate</button>` : `<button data-act="park" data-id="${esc(r["Deal ID"])}">⏸ Park (no follow-up)</button>`}
       </div>
       <div class="card"><div class="kv">
+        <div>Industry</div><div>${esc(r.Industry || "-")}</div>
         <div>Source</div><div>${esc(r.Source)}</div>
         <div>Est. headcount</div><div>${esc(r["Est. Headcount"] || "-")}</div>
         <div>Est. billing</div><div>${fmtL(r["Est. Monthly Billing (INR)"]) || "-"}${r["Est. Monthly Billing (INR)"] ? " / month" : ""}</div>
@@ -845,9 +852,10 @@
       <details class="moredetails"><summary>More details (edit anything — optional)</summary>
         <div style="margin-top:10px">
         <div class="f2">${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}${select("Service line", "Service Line", L("Service"), r["Service Line"])}</div>
-        <div class="f2">${field("Designation", "Designation", r.Designation)}${field("City", "City", r.City)}</div>
-        <div class="f2">${field("Phone", "Phone", r.Phone, "tel")}${field("Email", "Email", r.Email, "email")}</div>
-        <div class="f2">${field("Est. headcount", "Est. Headcount", r["Est. Headcount"], "number", 'inputmode="numeric"')}${field("Est. billing (₹ lakhs/mo)", "billL", billL, "number", 'step="0.1" inputmode="decimal"')}</div>
+        <div class="f2">${field("Designation / role", "Designation", r.Designation)}${field("Industry", "Industry", r.Industry)}</div>
+        <div class="f2">${field("City / location", "City", r.City)}${field("Phone", "Phone", r.Phone, "tel")}</div>
+        <div class="f2">${field("Email", "Email", r.Email, "email")}${field("Est. headcount", "Est. Headcount", r["Est. Headcount"], "number", 'inputmode="numeric"')}</div>
+        <div class="f">${field("Est. billing (₹ lakhs/mo)", "billL", billL, "number", 'step="0.1" inputmode="decimal"')}</div>
         ${field("Conversation links (one per line)", "Links", r.Links, "textarea")}
         </div>
       </details>
@@ -883,9 +891,11 @@
         const temp = chipVal(el, "temp") || r.Temperature;
         const stamp = D.toJS(cd).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
         const noteLine = `${stamp}: ${ch}${oc ? " - " + oc : ""}${f.notes ? " - " + f.notes : ""}`;
-        const changes = { "Last Contact": cd, "Next Step": f.next, "Next Step Date": nd || "", Temperature: temp, Stage: f.stage, Notes: (noteLine + (r.Notes ? " | " + r.Notes : "")).slice(0, 1500) };
+        // Sheet keeps only the MOST RECENT note (so the Notes cell stays short and the latest shows in lists).
+        // The full history lives in the Activity Log sheet, which the app's timeline reads from.
+        const changes = { "Last Contact": cd, "Next Step": f.next, "Next Step Date": nd || "", Temperature: temp, Stage: f.stage, Notes: noteLine.slice(0, 1500) };
         // "More details" fields — only the ones the user actually changed get written (API.update drops unchanged).
-        changes.Blocker = f.Blocker; changes["Service Line"] = f["Service Line"]; changes.Designation = f.Designation; changes.City = f.City;
+        changes.Blocker = f.Blocker; changes["Service Line"] = f["Service Line"]; changes.Designation = f.Designation; changes.City = f.City; changes.Industry = f.Industry;
         changes.Phone = f.Phone; changes.Email = f.Email; changes["Est. Headcount"] = f["Est. Headcount"];
         changes["Est. Monthly Billing (INR)"] = f.billL === "" ? "" : Math.round(f.billL * 1e5); changes.Links = f.Links;
         const stageMoved = changes.Stage && changes.Stage !== r.Stage;
@@ -934,7 +944,8 @@
       ${field("Account *", "Account", r.Account, "text", 'list="accts" autocomplete="off"')}${datalist("accts", deals().map((d) => d.Account).concat(live("targets").map((t) => t.Account)))}
       <div class="f2">${field("Contact *", "Contact", r.Contact)}${field("Designation", "Designation", r.Designation)}</div>
       <div class="f2">${field("Phone", "Phone", r.Phone, "tel")}${field("Email", "Email", r.Email, "email")}</div>
-      <div class="f2">${field("City", "City", r.City)}${select("Source", "Source", L("Source"), r.Source)}</div>
+      <div class="f2">${field("City / location", "City", r.City)}${field("Industry", "Industry", r.Industry, "text", 'list="inds" autocomplete="off"')}${datalist("inds", deals().map((d) => d.Industry))}</div>
+      <div class="f">${select("Source", "Source", L("Source"), r.Source)}</div>
       <div class="f2">${select("Service line", "Service Line", L("Service"), r["Service Line"])}${select("Stage", "Stage", L("Stage"), r.Stage, false)}</div>
       <div class="f"><label>Temperature</label>${chips("Temperature", L("Temp"), r.Temperature)}</div>
       <div class="f">${select("Blocker", "Blocker", L("Blocker"), r.Blocker)}</div>
@@ -952,7 +963,7 @@
       $("#save", el).onclick = () => {
         const f = form(el);
         if (!f.Account || !f.Contact) return toast("Account and contact are required", "warn");
-        const v = { Account: f.Account, Contact: f.Contact, Designation: f.Designation, Phone: f.Phone, Email: f.Email, City: f.City, Source: f.Source,
+        const v = { Account: f.Account, Contact: f.Contact, Designation: f.Designation, Phone: f.Phone, Email: f.Email, City: f.City, Industry: f.Industry, Source: f.Source,
           "Service Line": f["Service Line"], Stage: f.Stage, Temperature: chipVal(el, "Temperature"), Blocker: f.Blocker,
           "Est. Headcount": f["Est. Headcount"], "Est. Monthly Billing (INR)": f.billL === "" ? "" : Math.round(f.billL * 1e5), "Next Step": f["Next Step"], "Next Step Date": f["Next Step Date"], Notes: f.Notes, Links: f.Links };
         if (isNew) { v["Deal ID"] = nextDealId(); v.Owner = C.owner; v["Last Contact"] = preset["Last Contact"] || ""; API.add("pipeline", v); ttAutoDeal(v); close(); toast("Added " + v.Account); location.hash = "#/deal/" + encodeURIComponent(v["Deal ID"]); }
@@ -1934,6 +1945,8 @@
         case "snooze": e.stopPropagation(); return r && snooze(r);
         case "move": e.stopPropagation(); return r && moveSheet(r);
         case "stage": return r && setStage(r, a.dataset.v);
+        case "park": e.stopPropagation(); if (r && confirm("Stop follow-ups for " + r.Account + "?\n\nIt stays in your database under “Nurture” and leaves the active pipeline / Today list. You can Reactivate it anytime.")) { API.update("pipeline", r, { Stage: "Nurture", "Next Step Date": "", "Next Step": "" }); toast(r.Account + " parked — no more follow-ups"); render(); } return;
+        case "reactivate": e.stopPropagation(); if (r) { API.update("pipeline", r, { Stage: "Contact Established" }); toast(r.Account + " reactivated"); render(); } return;
         case "edit": return r && dealForm(r);
         case "newdeal": return dealForm(null);
         case "newmeeting": return meetingForm(null, r);
