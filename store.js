@@ -199,7 +199,7 @@
       }
       const p = parse(payload);
       adopt(p);
-      const m = await B.meta(); S.etag = m.eTag; S.lastWriteBy = (m.lastModifiedBy && m.lastModifiedBy.user && m.lastModifiedBy.user.displayName) || "";
+      const m = await B.meta(); S.etag = m.eTag; S.codeVersion = m.codeVersion || S.codeVersion; S.lastWriteBy = (m.lastModifiedBy && m.lastModifiedBy.user && m.lastModifiedBy.user.displayName) || "";
       S.loadedAt = Date.now();
       save(LS.cache, { payload, etag: S.etag, loadedAt: S.loadedAt });
       setStatus(S.queue.length ? "pending" : "synced");
@@ -297,7 +297,7 @@
     if (notes.length) { window.UI && UI.toast("Couldn't save: " + notes[0], "warn"); console.warn("Write failures:", notes); }
     // Fast path: skip the second full load. Just update the etag (cheap) so poll() won't
     // think the sheet changed under us, mark synced, and reconcile calc columns shortly after.
-    try { const m = await B.meta(); S.etag = m.eTag; } catch (e) {}
+    try { const m = await B.meta(); S.etag = m.eTag; S.codeVersion = m.codeVersion || S.codeVersion; } catch (e) {}
     setStatus(S.queue.length ? "pending" : "synced");
     scheduleReconcile();
   }

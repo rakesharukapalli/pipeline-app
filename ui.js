@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v55";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v56";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -1903,7 +1903,7 @@
     return { title: "Sync & settings", back: true, html: `
       <div class="card"><div class="kv"><div>Signed in</div><div>${esc(B.userName())}</div><div>Status</div><div>${esc(st)}${S.error ? `<div class="hint" style="color:var(--bad)">${esc(S.error)}</div>` : ""}</div>
       <div>Waiting to sync</div><div>${S.queue.length} change(s)</div><div>Last loaded</div><div>${S.loadedAt ? new Date(S.loadedAt).toLocaleString("en-GB") : "-"}</div>
-      <div>Last edited by</div><div>${esc(S.lastWriteBy || "-")}</div><div>App version</div><div><b>${VERSION}</b></div></div>
+      <div>Last edited by</div><div>${esc(S.lastWriteBy || "-")}</div><div>App version</div><div><b>${VERSION}</b></div><div>Backend (Code.gs)</div><div><b>${esc(S.codeVersion || "— tap Sync now —")}</b></div></div>
       ${S.writeNote ? `<div class="card" style="border-left:5px solid #C0392B;margin-top:8px"><b>Last save error</b><div style="white-space:pre-wrap;font-size:12px;margin-top:4px">${esc(S.writeNote)}</div></div>` : ""}
       <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="pri" data-act="syncnow">Sync now</button><button data-act="testconn">Test sheet connection</button><button data-act="clearfilters">Clear sheet filters</button>${S.queue.length ? '<button class="danger" data-act="dropq">Discard queued changes</button>' : ""}</div>
       <div class="hint" style="margin-top:6px">“Clear sheet filters” fixes the “filtered out row” error if adding a deal ever fails — all from here, no need to open the sheet.</div></div>
