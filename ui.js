@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v56";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v57";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -340,6 +340,7 @@
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
     lib: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h7M9 11h5"/></svg>',
     copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg>',
     tt: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>',
     link: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
   };
@@ -500,6 +501,20 @@
         ${note ? `<div class="lnote">${esc(note)}</div>` : ""}</div>
       <div class="lright">${followChip(x.follow, r["Next Step Date"])}<button class="lbtn" data-act="log" data-id="${esc(r["Deal ID"])}" aria-label="Update">${I.log}</button></div></div>`;
   }
+  // Compact one-line row for a delivery candidate (opens the Log/move sheet).
+  function delivRow(c) {
+    const nf = c["Next Follow-up"], iv = c["Interview Date"];
+    return `<div class="lrow" data-act="dlog" data-sig='${esc(c._sig)}'>
+      <span class="dotT Warm" style="flex:none"></span>
+      <div class="lmain"><div class="lt1">${esc(c.Candidate || c.Name || "")}${c.Role ? ` <span class="lwho">· ${esc(c.Role)}</span>` : ""}</div>
+        <div class="lmeta">🧑‍💼 ${esc(c.Client || "")}${c.Status ? " · " + esc(c.Status) : ""}</div></div>
+      <div class="lright"><span class="chip ${isNum(nf) && nf < today() ? "bad" : ""}">${isNum(iv) ? "📅 " + esc(D.fmt(iv)) : isNum(nf) ? esc(D.fmt(nf)) : ""}</span></div></div>`;
+  }
+  // Wrap arbitrary HTML content in a collapsible section (remembers open/closed per title).
+  function secWrap(title, inner, count, cls) {
+    const k = "pp.sec." + title; let open = true; try { open = localStorage.getItem(k) !== "0"; } catch (e) {}
+    return `<details class="secwrap" data-seck="${esc(k)}" ${open ? "open" : ""}><summary class="sec ${cls || ""}"><h2>${esc(title)}</h2>${count != null ? `<span class="count">${count}</span>` : ""}<span class="secchev">▾</span></summary>${inner}</details>`;
+  }
   // Compact section whose items are rows inside one card (not big blocks).
   function sectionRows(title, rows, cls = "") {
     if (!rows.length) return "";
@@ -514,7 +529,7 @@
       <div class="t2">${esc(m.Contact)}${m.Designation ? " · " + esc(m.Designation) : ""}</div>
       ${m["Outcome / Next Step"] ? `<div class="t3">${esc(m["Outcome / Next Step"])}</div>` : ""}
       <div class="meta"><span class="chip ${past ? "warn" : "ok"}">${esc(D.fmt(m.Date))}</span><span class="chip">${esc(m["Meeting Type"] || "Meeting")}</span><span class="chip">${esc(m.Status || "")}</span>${m["Decision Maker?"] === "Y" ? '<span class="chip stage">Decision maker</span>' : ""}</div>
-      <div class="acts">${past ? `<button class="pri" data-act="held" data-sig='${esc(m._sig)}'>Mark held</button><button data-act="meeting" data-sig='${esc(m._sig)}'>Reschedule</button>` : ""}<button class="danger" data-act="delmeet" data-sig='${esc(m._sig)}'>Delete</button></div>
+      ${past ? `<div class="acts"><button class="pri" data-act="held" data-sig='${esc(m._sig)}'>Mark held</button><button data-act="meeting" data-sig='${esc(m._sig)}'>Reschedule</button></div>` : ""}
       </div></div>`;
   }
 
@@ -535,7 +550,9 @@
     const noNext = ds.filter(({ r, x }) => x.open && x.follow === "No next step" && (r.Temperature === "Hot" || r.Temperature === "Warm")).sort((a, b) => b.x.score - a.x.score);
     // Forward follow-up buckets by next-step date (non-overlapping), soonest first.
     const inRange = (lo, hi) => ds.filter(({ r, x }) => x.open && isNum(r["Next Step Date"]) && r["Next Step Date"] >= lo && r["Next Step Date"] <= hi).sort((a, b) => a.r["Next Step Date"] - b.r["Next Step Date"]);
-    const bToday = inRange(t, t), bTom = inRange(t + 1, t + 1), bWeek = inRange(t + 2, t + 7), bFort = inRange(t + 8, t + 14), bMonth = inRange(t + 15, t + 30), bQtr = inRange(t + 31, t + 90);
+    // Due today is ordered by touch-base priority: longest since last contact first (oldest Last Contact).
+    const bToday = inRange(t, t).sort((a, b) => (a.r["Last Contact"] || 0) - (b.r["Last Contact"] || 0));
+    const bTom = inRange(t + 1, t + 1), bWeek = inRange(t + 2, t + 7), bFort = inRange(t + 8, t + 14), bMonth = inRange(t + 15, t + 30), bQtr = inRange(t + 31, t + 90);
     const ms = live("meetings");
     const upcoming = ms.filter((m) => isNum(m.Date) && m.Date >= t && m.Date <= t + 7 && ["Booked", "To confirm"].includes(m.Status)).sort((a, b) => a.Date - b.Date);
     const closeOut = ms.filter((m) => isNum(m.Date) && m.Date < t && ["Booked", "To confirm"].includes(m.Status));
@@ -546,7 +563,8 @@
     const inc = live("accounts").filter((a) => isNum(a["First Resource Deployed Date"]) && t - a["First Resource Deployed Date"] >= incDays - warn && t - a["First Resource Deployed Date"] <= incDays + 30);
     const clients = live("accounts").filter((a) => a["Account Type"] === "Client in Progress" && (!isNum(a["Next Step Date"]) || a["Next Step Date"] <= t));
     const dAll = live("delivery");
-    const dDue = dAll.filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]) && c["Next Follow-up"] <= t).sort((a, b) => a["Next Follow-up"] - b["Next Follow-up"]);
+    const dDueToday = dAll.filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]) && c["Next Follow-up"] === t).sort((a, b) => (a["Last Follow-up"] || 0) - (b["Last Follow-up"] || 0));
+    const dDue = dAll.filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]) && c["Next Follow-up"] < t).sort((a, b) => a["Next Follow-up"] - b["Next Follow-up"]);   // overdue delivery (today's shows under Due today)
     const dIv = dAll.filter((c) => dActive(c.Status) && isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7).sort((a, b) => a["Interview Date"] - b["Interview Date"]);
     const agenda = agendaKey();
     // ---- Recent tractions: EVERY recent update you made (last 14 days), newest first, one per account/lead.
@@ -585,7 +603,7 @@
         </div></div>
       ${sectionRows("Recent tractions", traction.slice(0, 15).map(tractionRow), "ok")}
       <div id="sec-over">${sectionRows("Overdue follow-ups", overdue.map(dealRow), "bad")}</div>
-      ${sectionRows("Due today", bToday.map(dealRow), "warn")}
+      ${sectionRows("Due today", bToday.map(dealRow).concat(dDueToday.map(delivRow)), "warn")}
       ${sectionRows("Tomorrow", bTom.map(dealRow))}
       ${sectionRows("This week", bWeek.map(dealRow))}
       ${sectionRows("Next fortnight", bFort.map(dealRow))}
@@ -597,10 +615,10 @@
       ${section("Your commitments", commits.slice(0, 5).map(commitCard))}
       ${dDue.length || dIv.length ? `<div class="sec"><h2>Delivery</h2><a href="#/delivery" style="font-size:12px;font-weight:600">Open ›</a></div>` : ""}
       ${section("Delivery - interviews this week", dIv.map(dCandCard))}
-      ${section("Delivery - follow-ups due", dDue.map(dCandCard), "warn")}
+      ${section("Delivery - overdue follow-ups", dDue.map(dCandCard), "warn")}
       ${section("Needs your approval (below margin)", approvals.map(propCard), "bad")}
       ${section("Logo incentive watch", inc.map(accCard))}
-      ${!overdue.length && !bToday.length && !bTom.length && !upcoming.length && !dDue.length && !dIv.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
+      ${!overdue.length && !bToday.length && !dDueToday.length && !bTom.length && !upcoming.length && !dDue.length && !dIv.length ? '<div class="card" style="text-align:center">Nothing urgent. Good time to prospect - open <a href="#/outreach">Outreach</a>.</div>' : ""}`;
     return { title: dashScope === "core" ? "Pipeline" : "Today", html, mount: mountScope };
   };
 
@@ -641,7 +659,23 @@
   }
 
   // ---------------- PIPELINE board
-  const pstate = { q: "", temp: "", view: "board", closed: false, seg: "", stage: "", city: "", source: "", svc: "", follow: "" };
+  const pstate = { q: "", temp: "", view: "board", closed: false, seg: "", stage: "", city: "", source: "", svc: "", follow: "", sort: "score" };
+  const SORT_OPTS = [["score", "Priority (default)"], ["date", "Next-step date"], ["temp", "Temperature (Hot→Cold)"], ["account", "Account A–Z"], ["contact", "Last contact (oldest)"], ["value", "Value (high→low)"]];
+  const TEMP_ORDER = { Hot: 0, Warm: 1, Cool: 2, Cold: 3 };
+  const tOrd = (t) => (TEMP_ORDER[t] != null ? TEMP_ORDER[t] : 9);
+  function sortDeals(arr) {   // arr of {r,x}
+    const s = pstate.sort || "score", a = arr.slice();
+    const nd = (r) => (isNum(r["Next Step Date"]) ? r["Next Step Date"] : 9e9);
+    const lc = (r) => (isNum(r["Last Contact"]) ? r["Last Contact"] : 9e9);
+    const bill = (r) => (isNum(r["Est. Monthly Billing (INR)"]) ? r["Est. Monthly Billing (INR)"] : 0);
+    if (s === "date") a.sort((p, q) => nd(p.r) - nd(q.r) || q.x.score - p.x.score);
+    else if (s === "temp") a.sort((p, q) => tOrd(p.r.Temperature) - tOrd(q.r.Temperature) || q.x.score - p.x.score);
+    else if (s === "account") a.sort((p, q) => String(p.r.Account || "").localeCompare(String(q.r.Account || "")));
+    else if (s === "contact") a.sort((p, q) => lc(p.r) - lc(q.r));
+    else if (s === "value") a.sort((p, q) => bill(q.r) - bill(p.r) || q.x.score - p.x.score);
+    else a.sort((p, q) => q.x.score - p.x.score);
+    return a;
+  }
   const SEGLAB = { "": "All", core: "Pipeline", gcc: "GCC", gf: "GCC", bf: "GCC" };
   const FOLLOW_OPTS = ["Overdue", "Due today", "This week", "Scheduled", "No next step"];
   V.pipeline = (params) => {
@@ -670,6 +704,7 @@
           ${sel("fsvc", pstate.svc, uniq("Service Line"), "All service lines")}
           ${sel("ftemp", pstate.temp, ["Hot", "Warm", "Cool", "Cold"], "All temperatures")}
           ${sel("ffollow", pstate.follow, FOLLOW_OPTS, "All follow-ups")}
+          <select id="fsort" class="fsel">${SORT_OPTS.map(([v, l]) => `<option value="${v}" ${pstate.sort === v ? "selected" : ""}>Sort: ${esc(l)}</option>`).join("")}</select>
         </div>
         <div class="frow"><label class="fchk"><input type="checkbox" id="fclosed" ${pstate.closed ? "checked" : ""}> Include Nurture &amp; Lost</label><button class="btn" id="fclear">Clear filters</button></div>
       </details>
@@ -681,7 +716,7 @@
         $("#pview", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.view = b.dataset.v; render(); } };
         $("#pseg", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.seg = b.dataset.v; history.replaceState(null, "", "#/pipeline"); render(); } };
         if ($("#pgcc", el)) $("#pgcc", el).onclick = (e) => { const b = e.target.closest("button"); if (b) { pstate.seg = b.dataset.v; history.replaceState(null, "", "#/pipeline"); render(); } };
-        [["fstage", "stage"], ["fcity", "city"], ["fsource", "source"], ["fsvc", "svc"], ["ftemp", "temp"], ["ffollow", "follow"]].forEach(([id, key]) => { const s = $("#" + id, el); if (s) s.onchange = () => { pstate[key] = s.value; refresh(); }; });
+        [["fstage", "stage"], ["fcity", "city"], ["fsource", "source"], ["fsvc", "svc"], ["ftemp", "temp"], ["ffollow", "follow"], ["fsort", "sort"]].forEach(([id, key]) => { const s = $("#" + id, el); if (s) s.onchange = () => { pstate[key] = s.value; refresh(); }; });
         $("#fclosed", el).onchange = (e) => { pstate.closed = e.target.checked; refresh(); };
         $("#fclear", el).onclick = () => { Object.assign(pstate, { temp: "", stage: "", city: "", source: "", svc: "", follow: "", closed: false }); render(); };
         wireDnD(el);
@@ -712,11 +747,11 @@
     const stages = pstate.stage ? [pstate.stage] : L("Stage").filter((s) => pstate.closed || !["Nurture", "Lost"].includes(s));
     const ds = filtered();
     if (pstate.view === "list") {
-      const s = ds.map((r) => ({ r, x: deal(r) })).sort((a, b) => b.x.score - a.x.score);
+      const s = sortDeals(ds.map((r) => ({ r, x: deal(r) })));
       return s.length ? `<div class="cardgrid">${s.map((d) => dealCard(d.r, { noActs: true })).join("")}</div>` : '<div class="empty">No deals match.</div>';
     }
     return `<div class="board">${stages.map((st) => {
-      const items = ds.filter((r) => r.Stage === st).map((r) => ({ r, x: deal(r) })).sort((a, b) => b.x.score - a.x.score);
+      const items = sortDeals(ds.filter((r) => r.Stage === st).map((r) => ({ r, x: deal(r) })));
       const w = items.reduce((s, d) => s + d.x.weighted, 0);
       return `<div class="col" data-stage="${esc(st)}"><h3><span>${esc(st)} · ${items.length}</span><span>${fmtL(w)}</span></h3>
         ${items.map(({ r, x }) => `<div class="card bcard" draggable="true" data-id="${esc(r["Deal ID"])}" data-go="#/deal/${encodeURIComponent(r["Deal ID"])}">
@@ -831,7 +866,7 @@
 
   // ---------------- LOG TOUCH
   const OUTCOMES = ["No answer", "Call Busy", "Connected", "Replied", "Meeting booked", "Requirement shared", "Call back later", "Not interested", "Others"];
-  const NEXT_SUGGEST = ["Follow-up call", "Send capability deck", "Send rate card", "Share profiles", "Book meeting", "Proposal follow-up", "Check-in next quarter"];
+  const NEXT_SUGGEST = ["Follow-up call", "Follow-up email", "Send capability deck", "Send rate card", "Share profiles", "Book meeting", "Proposal follow-up", "Check-in next quarter"];
   const CH_MAP = { Call: "Cold Call", WhatsApp: "Cold Call", Email: "Email", LinkedIn: "LinkedIn" };
   // ---- ONE unified "Update" sheet: the single place to log a contact AND update any detail.
   function logTouch(r, preset = {}) {
@@ -847,7 +882,7 @@
       <div class="f"><label>Next step</label>
         <select name="nextsel" id="nextsel"><option value="">— pick a next step —</option>${NEXT_SUGGEST.map((s) => `<option ${r["Next Step"] === s ? "selected" : ""}>${esc(s)}</option>`).join("")}${r["Next Step"] && !NEXT_SUGGEST.includes(r["Next Step"]) ? `<option selected>${esc(r["Next Step"])}</option>` : ""}<option value="__other">Other (type your own)…</option></select>
         <input name="next" id="nextinput" value="${esc(r["Next Step"] || "")}" placeholder="Type the next step" class="hidden" style="margin-top:6px"></div>
-      <div class="f"><label>Next follow-up date *</label>${dateChips("ndate", "")}</div>
+      <div class="f"><label>Next follow-up date <span class="hint">(optional)</span></label>${dateChips("ndate", "")}</div>
       <div class="f"><label>Temperature</label>${chips("temp", L("Temp"), r.Temperature)}</div>
       ${select("Stage", "stage", L("Stage"), r.Stage, false)}
       <details class="moredetails"><summary>More details (edit anything — optional)</summary>
@@ -886,9 +921,8 @@
         // since the follow-up discipline depends on it.
         const cd = isNum(f.cdate) ? f.cdate : t;
         const noAnswer = ["No answer", "Call Busy"].includes(oc);
-        let nd = f.ndate;
+        let nd = f.ndate;   // next follow-up is OPTIONAL now
         if (oc === "Meeting booked" && isNum(f.mdate) && !nd) nd = f.mdate;
-        if (!isNum(nd) && oc !== "Not interested") return toast("Set the next follow-up date", "warn");
         const temp = chipVal(el, "temp") || r.Temperature;
         const stamp = D.toJS(cd).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
         const noteLine = `${stamp}: ${ch}${oc ? " - " + oc : ""}${f.notes ? " - " + f.notes : ""}`;
@@ -1000,7 +1034,11 @@
       <div class="f"><label>Status</label>${chips("status", L("MeetStatus"), m.Status)}</div>
       ${field("Agenda / outcome / next step", "out", m["Outcome / Next Step"], "textarea")}
       ${isNew ? `<div class="toggle"><div><b>Add to Outlook</b><div class="hint">45-min calendar event with reminder</div></div><input type="checkbox" name="cal" checked></div>` : ""}
-      <button class="btn pri block" id="save">${isNew ? "Book" : "Save"}</button>`, (el, close) => {
+      <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+        <button class="btn pri" id="save" style="flex:1">${isNew ? "Book" : "Save"}</button>
+        ${isNew ? "" : `<button id="delmeet" title="Delete meeting" aria-label="Delete meeting" style="flex:none;border:none;background:transparent;color:var(--ink-3);padding:8px;cursor:pointer">${I.trash}</button>`}
+      </div>`, (el, close) => {
+      const dm = $("#delmeet", el); if (dm) dm.onclick = () => { if (confirm("Delete this meeting?")) { const chg = {}; S.tables.meetings.headers.filter((h) => !Store.isCalc(h)).forEach((h) => { if (m[h] !== "" && m[h] != null) chg[h] = ""; }); API.update("meetings", m, chg); close(); toast("Meeting deleted"); render(); } };
       $("#save", el).onclick = () => {
         const f = form(el);
         const v = { Date: f.Date, Account: f.Account, Contact: f.Contact, Designation: f.Designation, "Decision Maker?": chipVal(el, "dm"), "Meeting Type": chipVal(el, "type"), Status: chipVal(el, "status"), "Outcome / Next Step": f.out, Owner: m.Owner || C.owner };
@@ -1965,7 +2003,6 @@
         case "newmeeting": return meetingForm(null, r);
         case "meeting": e.stopPropagation(); { const m = bySig("meetings", sig); return m && meetingForm(m); }
         case "held": e.stopPropagation(); { const m = bySig("meetings", sig); return m && markHeld(m); }
-        case "delmeet": e.stopPropagation(); { const m = bySig("meetings", sig); if (m && confirm("Delete this meeting with " + (m.Account || "") + "?")) { const chg = {}; S.tables.meetings.headers.filter((h) => !Store.isCalc(h)).forEach((h) => { if (m[h] !== "" && m[h] != null) chg[h] = ""; }); API.update("meetings", m, chg); toast("Meeting deleted"); render(); } return; }
         case "newprop": return propForm(null, r);
         case "prop": { const p = bySig("proposals", sig); return p && propForm(p); }
         case "newreq": return reqForm(null, r);
@@ -2197,25 +2234,19 @@
         <div><div style="font-size:20px;font-weight:800">${dropRate}%</div><div class="hint">Drop rate</div></div>
         <div><div style="font-size:20px;font-weight:800">${avgAge}d</div><div class="hint">Avg age</div></div>
       </div>
-      <div class="sec"><h2>Review talking points</h2></div>
-      <div class="card" style="border-left:5px solid #EFA000"><ul style="margin:0;padding-left:18px;line-height:1.7">${tp.map((x) => `<li>${x}</li>`).join("")}</ul>
-        <div class="acts" style="margin-top:10px"><button class="pri" data-act="revcopy" style="padding:5px 11px;font-size:11.5px;border-radius:10px">${I.copy}<span class="lbl">Copy</span></button></div></div>
-      <div class="sec"><h2>Client-wise</h2><span class="count">${clientRows.length}</span></div>
-      <div class="card"><table class="mini"><tr><th>Client</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
-        ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${clientOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>
-      ${spocRows.length ? `<div class="sec"><h2>POC-wise (SPOC)</h2><span class="count">${spocRows.length}</span></div>
-      <div class="card"><table class="mini"><tr><th>POC</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
-        ${spocRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${spocOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>` : ""}
-      <div class="sec"><h2>Conversion funnel · ${PERIOD_LABEL[revPeriod]}</h2></div>
-      <div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of prev</th><th class="n">of sub</th></tr>
+      ${secWrap("Review talking points", `<div class="card" style="border-left:5px solid #EFA000"><ul style="margin:0;padding-left:18px;line-height:1.7">${tp.map((x) => `<li>${x}</li>`).join("")}</ul>
+        <div class="acts" style="margin-top:10px"><button class="pri" data-act="revcopy" style="padding:5px 11px;font-size:11.5px;border-radius:10px">${I.copy}<span class="lbl">Copy</span></button></div></div>`)}
+      ${secWrap("Client-wise", `<div class="card"><table class="mini"><tr><th>Client</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
+        ${clientRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${clientOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>`, clientRows.length)}
+      ${spocRows.length ? secWrap("POC-wise (SPOC)", `<div class="card"><table class="mini"><tr><th>POC</th><th class="n">Open</th><th class="n">Sub</th><th class="n">Active</th><th class="n">IV/wk</th><th class="n">Offer</th><th class="n">Joined</th></tr>
+        ${spocRows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${spocOpen[k] || 0}</td><td class="n">${v.sub}</td><td class="n">${v.act}</td><td class="n">${v.iv}</td><td class="n">${v.off}</td><td class="n">${v.jn}</td></tr>`).join("")}</table></div>`, spocRows.length) : ""}
+      ${secWrap(`Conversion funnel · ${PERIOD_LABEL[revPeriod]}`, `<div class="card"><table class="mini"><tr><th>Stage</th><th class="n">#</th><th class="n">of prev</th><th class="n">of sub</th></tr>
         <tr><td>Submitted</td><td class="n">${sub}</td><td class="n">—</td><td class="n">100%</td></tr>
         <tr><td>Interviewed</td><td class="n">${rIv}</td><td class="n">${pc(rIv, sub)}%</td><td class="n">${pc(rIv, sub)}%</td></tr>
         <tr><td>Offered</td><td class="n">${rOf}</td><td class="n">${pc(rOf, rIv)}%</td><td class="n">${pc(rOf, sub)}%</td></tr>
-        <tr><td>Joined</td><td class="n">${rJn}</td><td class="n">${pc(rJn, rOf)}%</td><td class="n">${pc(rJn, sub)}%</td></tr></table></div>
-      <div id="rv-reqs" class="sec"><h2>Requirement-wise</h2><span class="count">${openReqs.length}</span></div>
-      <div class="card">${openReqs.length ? `<table class="mini"><tr><th>Role</th><th class="n">Age</th><th class="n">Sub</th><th class="n">Active</th><th>Furthest</th></tr>${reqRows}</table><div class="hint" style="margin-top:7px">● red = aged / no pipeline · ● amber = aging · ● green = healthy — tap a row to open</div>` : '<div class="empty">No open roles</div>'}</div>
-      <div class="sec"><h2>Aging of open roles</h2></div>
-      <div class="card">${buckets.map((b) => bar(b[0], b[1], maxB)).join("")}</div>
+        <tr><td>Joined</td><td class="n">${rJn}</td><td class="n">${pc(rJn, rOf)}%</td><td class="n">${pc(rJn, sub)}%</td></tr></table></div>`)}
+      ${secWrap("Requirement-wise", `<div id="rv-reqs" class="card">${openReqs.length ? `<table class="mini"><tr><th>Role</th><th class="n">Age</th><th class="n">Sub</th><th class="n">Active</th><th>Furthest</th></tr>${reqRows}</table><div class="hint" style="margin-top:7px">● red = aged / no pipeline · ● amber = aging · ● green = healthy — tap a row to open</div>` : '<div class="empty">No open roles</div>'}</div>`, openReqs.length)}
+      ${secWrap("Aging of open roles", `<div class="card">${buckets.map((b) => bar(b[0], b[1], maxB)).join("")}</div>`)}
       ${atRisk.length ? `<div class="sec bad"><h2>Needs attention</h2><span class="count">${atRisk.length}</span></div><div class="cardgrid">${atRisk.map(dReqCard).join("")}</div>` : ""}`;
   }
 
@@ -2486,6 +2517,11 @@
         <div class="f"><label>SPOC (pick or type new)</label><input name="dspoc" list="impspocs" autocomplete="off">${datalist("impspocs", spocOptions())}</div>
       </div>
       <div class="f2">${field("Apply Role (optional override)", "drole", "")}<div class="f"><label>Attach to requirement (optional)</label><select name="dreq"><option value="">— none —</option>${reqOpts().map((o) => `<option>${esc(o)}</option>`).join("")}</select></div></div>
+      <div class="f2">
+        <div class="f"><label>Set status for all (basket)</label><select name="dstatus"><option value="">— leave empty —</option>${DSTATUS.map((s) => `<option>${esc(s)}</option>`).join("")}</select></div>
+        <div class="f"><label>Next follow-up for all</label><input type="date" name="dnf" value="${esc(D.toISO(D.addBiz(today(), 2)))}"></div>
+      </div>
+      <div class="hint" style="margin:-2px 0 6px">These apply to every profile in this import so you can drop them straight into the right basket. You can still change any profile later from its card.</div>
       <button class="btn block" id="prev">Preview</button>
       <div id="impprev" style="margin-top:10px"></div>
       <button class="btn pri block" id="impadd" style="margin-top:10px;display:none">Add candidates</button>`, (el, close) => {
@@ -2520,8 +2556,8 @@
             Client: f.dclient || r.Client || (rr && rr.Client) || "",
             Role: r.Role || f.drole || (rr && rr.Role) || "",
             SPOC: f.dspoc || r.SPOC || (rr && rr.SPOC) || "",
-            Submitted: today(), Status: (r.Status && DSTATUS.includes(r.Status)) ? r.Status : "",
-            "Next Follow-up": D.addBiz(today(), 2), "Notice Period": r["Notice Period"] || "",
+            Submitted: today(), Status: (r.Status && DSTATUS.includes(r.Status)) ? r.Status : (f.dstatus || ""),
+            "Next Follow-up": isNum(f.dnf) ? f.dnf : "", "Notice Period": r["Notice Period"] || "",
             "Experience (yrs)": r["Experience (yrs)"] == null ? "" : r["Experience (yrs)"],
             "Current CTC (LPA)": r["Current CTC (LPA)"] == null ? "" : r["Current CTC (LPA)"], "Expected CTC (LPA)": r["Expected CTC (LPA)"] == null ? "" : r["Expected CTC (LPA)"],
           };
