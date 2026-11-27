@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v52";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v53";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -1904,6 +1904,7 @@
       <div class="card"><div class="kv"><div>Signed in</div><div>${esc(B.userName())}</div><div>Status</div><div>${esc(st)}${S.error ? `<div class="hint" style="color:var(--bad)">${esc(S.error)}</div>` : ""}</div>
       <div>Waiting to sync</div><div>${S.queue.length} change(s)</div><div>Last loaded</div><div>${S.loadedAt ? new Date(S.loadedAt).toLocaleString("en-GB") : "-"}</div>
       <div>Last edited by</div><div>${esc(S.lastWriteBy || "-")}</div><div>App version</div><div><b>${VERSION}</b></div></div>
+      ${S.writeNote ? `<div class="card" style="border-left:5px solid #C0392B;margin-top:8px"><b>Last save error</b><div style="white-space:pre-wrap;font-size:12px;margin-top:4px">${esc(S.writeNote)}</div></div>` : ""}
       <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="pri" data-act="syncnow">Sync now</button><button data-act="testconn">Test sheet connection</button>${S.queue.length ? '<button class="danger" data-act="dropq">Discard queued changes</button>' : ""}</div></div>
       <div class="card"><b>Theme</b><div style="margin-top:8px">${chips("theme", [["", "Auto"], ["light", "Light"], ["dark", "Dark"]], localStorage.getItem("pp.theme") || "")}</div></div>
       <div class="card"><b>Install on your phone</b><div class="hint" style="margin-top:6px">${isIOS ? "Safari: tap Share → Add to Home Screen." : "Chrome: menu ⋮ → Install app (or Add to Home screen)."}</div>${installEvt ? '<button class="btn pri" data-act="install" style="margin-top:8px">Install now</button>' : ""}</div>

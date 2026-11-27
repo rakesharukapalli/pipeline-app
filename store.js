@@ -292,7 +292,9 @@
       return;
     }
     flushing = false;
-    if (notes.length) window.UI && UI.toast(notes[0], "warn");
+    // Remember the last write error so the user can read the FULL message (toasts fade). Shown in Settings.
+    S.writeNote = notes.length ? notes.join("\n") : "";
+    if (notes.length) { window.UI && UI.toast("Couldn't save: " + notes[0], "warn"); console.warn("Write failures:", notes); }
     // Fast path: skip the second full load. Just update the etag (cheap) so poll() won't
     // think the sheet changed under us, mark synced, and reconcile calc columns shortly after.
     try { const m = await B.meta(); S.etag = m.eTag; } catch (e) {}
