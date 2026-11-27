@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v53";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v54";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
