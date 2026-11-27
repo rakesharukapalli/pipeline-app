@@ -4,7 +4,7 @@
   const C = window.APP_CONFIG;
   const B = window.Backend;
   let edits = 0;
-  const VERSION = "v51";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
+  const VERSION = "v52";   // bump with each release; shown in Settings so you can confirm the update loaded (not cache)
   const API = new Proxy(Store.API, { get: (o, k) => (...a) => { edits++; try { recordAct(k, a); } catch (e) {} const r = o[k](...a); return r; } });
 
   // ---------------- daily activity log (for stand-up: everything you did in the app that day)
@@ -46,7 +46,7 @@
     if (!parts.length) return "";
     return `${recName(row) || TABLE_LABEL[t] || t} · ${parts.join(", ")}`;
   }
-  const ACT_SKIP = { delivery: 1, deliveryReqs: 1 };   // the whole Delivery module is excluded, per request
+  const ACT_SKIP = {};   // Delivery is now included in My activity too (per request)
   function recordAct(k, a) {
     if (suppressAct) return;
     if (k === "add") { const t = a[0]; if (ACT_SKIP[t]) return; logAct(describeAdd(t, a[1] || {})); }
@@ -228,9 +228,11 @@
   let ttState = { connected: false, configured: false, checked: false };
   let ttLastPull = 0;
   const ttPaused = () => { try { return localStorage.getItem("pp.ttpause") === "1"; } catch (e) { return false; } };
-  // Auto-push to TickTick is OFF by default — the sheet saves fast, and TickTick is updated only
-  // when you tap the TickTick button, OR if you turn auto-push on here. ("1" = auto on.)
-  const ttAutoOn = () => { try { return localStorage.getItem("pp.ttauto") === "1"; } catch (e) { return false; } };
+  // Auto-PUSH to TickTick is ON by default but DEFERRED (batched a while after you save, so it never
+  // slows a save). Auto-PULL is OFF by default (pulling can overwrite a sheet edit with a stale
+  // TickTick date — the revert bug), so pulling is manual via the "Sync from TickTick" button.
+  const ttPushOn = () => { try { return localStorage.getItem("pp.ttpush") !== "0"; } catch (e) { return true; } };
+  const ttPullOn = () => { try { return localStorage.getItem("pp.ttpull") === "1"; } catch (e) { return false; } };
   async function ttRefreshState() {
     if (B.demo || ttPaused()) { ttState = { connected: false, demo: B.demo, paused: ttPaused(), checked: true }; return ttState; }
     try { const s = await ttCall("ticktick_status"); ttState = Object.assign({ checked: true }, s); }
@@ -241,26 +243,26 @@
     // Auto-pull is gated by the SAME toggle as auto-push. When TickTick is manual (the default),
     // the app never auto-pulls — so an edit you make directly in the sheet is NEVER overwritten by
     // a stale TickTick due date. (Use the "Sync from TickTick" button to pull on demand.)
-    if (B.demo || ttPaused() || !ttAutoOn() || !ttState.connected) return;
+    if (B.demo || ttPaused() || !ttPullOn() || !ttState.connected) return;
     const now = Date.now(); if (!force && now - ttLastPull < 45000) return;
     ttLastPull = now; ttPullAll(null, true);
   }
   // TickTick pushes are DEFERRED: they run only after the sheet save queue is empty, one at a
   // time, so they never compete with the sheet save for an Apps Script execution slot (which was
   // making saves feel slow). Each is a separate call to the same endpoint, hence the throttling.
-  const ttPending = [];
+  const ttPending = new Map();   // ref -> job (keeps only the latest push per deal/commitment)
   let ttDrainTimer = null;
   function ttDrain() {
     clearTimeout(ttDrainTimer);
     ttDrainTimer = setTimeout(async () => {
-      if (S.queue.length) { ttDrain(); return; }   // wait until sheet writes finish
-      const jobs = ttPending.splice(0);
+      if (S.queue.length) { ttDrain(); return; }   // wait until sheet writes finish & settle
+      const jobs = [...ttPending.values()]; ttPending.clear();
       for (const j of jobs) { try { await j(); } catch (e) {} }   // sequential, never parallel
-    }, 3000);
+    }, 15000);   // ~15s after the last edit: batched, well clear of the save
   }
-  function ttLater(fn) { ttPending.push(fn); ttDrain(); }
-  function ttAutoDeal(r) { if (ttAutoOn() && !B.demo && !ttPaused() && ttState.connected && isNum(r["Next Step Date"])) ttLater(() => ttPushDeal(r)); }
-  function ttAutoCommit(c) { if (ttAutoOn() && !B.demo && !ttPaused() && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttLater(() => ttPushCommit(c)); }
+  function ttLater(ref, fn) { ttPending.set(ref, fn); ttDrain(); }
+  function ttAutoDeal(r) { if (ttPushOn() && !B.demo && !ttPaused() && ttState.connected && isNum(r["Next Step Date"])) ttLater("pipe:" + (r["Deal ID"] || r.Account), () => ttPushDeal(r)); }
+  function ttAutoCommit(c) { if (ttPushOn() && !B.demo && !ttPaused() && ttState.connected && isNum(c["Due Date"]) && ["Proposed", "Committed"].includes(c.Status)) ttLater("commit:" + (c.Commitment || ""), () => ttPushCommit(c)); }
 
   // ---------------- AI (optional, via your private Cloudflare Workers AI endpoint)
   const aiOn = () => !!(C.aiUrl && !/PASTE/.test(C.aiUrl));
@@ -512,7 +514,7 @@
       <div class="t2">${esc(m.Contact)}${m.Designation ? " · " + esc(m.Designation) : ""}</div>
       ${m["Outcome / Next Step"] ? `<div class="t3">${esc(m["Outcome / Next Step"])}</div>` : ""}
       <div class="meta"><span class="chip ${past ? "warn" : "ok"}">${esc(D.fmt(m.Date))}</span><span class="chip">${esc(m["Meeting Type"] || "Meeting")}</span><span class="chip">${esc(m.Status || "")}</span>${m["Decision Maker?"] === "Y" ? '<span class="chip stage">Decision maker</span>' : ""}</div>
-      ${past ? `<div class="acts"><button class="pri" data-act="held" data-sig='${esc(m._sig)}'>Mark held</button><button data-act="meeting" data-sig='${esc(m._sig)}'>Reschedule</button></div>` : ""}
+      <div class="acts">${past ? `<button class="pri" data-act="held" data-sig='${esc(m._sig)}'>Mark held</button><button data-act="meeting" data-sig='${esc(m._sig)}'>Reschedule</button>` : ""}<button class="danger" data-act="delmeet" data-sig='${esc(m._sig)}'>Delete</button></div>
       </div></div>`;
   }
 
@@ -529,7 +531,7 @@
     if (dashScope === "gcc") return { title: "GCC", html: scopeToggle() + gccDash(ds), mount: mountScope };
     const pipeHref = dashScope === "core" ? "#/pipeline?seg=core" : "#/pipeline";
     const actionable = ds.filter(({ r, x }) => x.open || r.Stage === "Nurture");
-    const overdue = actionable.filter(({ x }) => x.follow === "Overdue").sort((a, b) => (b.x.score - a.x.score));
+    const overdue = actionable.filter(({ x }) => x.follow === "Overdue").sort((a, b) => (b.r["Next Step Date"] || 0) - (a.r["Next Step Date"] || 0));
     const noNext = ds.filter(({ r, x }) => x.open && x.follow === "No next step" && (r.Temperature === "Hot" || r.Temperature === "Warm")).sort((a, b) => b.x.score - a.x.score);
     // Forward follow-up buckets by next-step date (non-overlapping), soonest first.
     const inRange = (lo, hi) => ds.filter(({ r, x }) => x.open && isNum(r["Next Step Date"]) && r["Next Step Date"] >= lo && r["Next Step Date"] <= hi).sort((a, b) => a.r["Next Step Date"] - b.r["Next Step Date"]);
@@ -547,21 +549,20 @@
     const dDue = dAll.filter((c) => dActive(c.Status) && isNum(c["Next Follow-up"]) && c["Next Follow-up"] <= t).sort((a, b) => a["Next Follow-up"] - b["Next Follow-up"]);
     const dIv = dAll.filter((c) => dActive(c.Status) && isNum(c["Interview Date"]) && c["Interview Date"] >= t && c["Interview Date"] <= t + 7).sort((a, b) => a["Interview Date"] - b["Interview Date"]);
     const agenda = agendaKey();
-    // ---- Recent traction: accounts/leads with a POSITIVE recent outcome (progress at a glance)
+    // ---- Recent tractions: EVERY recent update you made (last 14 days), newest first, one per account/lead.
     const scopeAccts = new Set(ds.map((d) => d.r.Account));
     const POS = /connected|replied|meeting|requirement shared|positive|interested|proposal|shortlist|selected|advanced/i;
-    const NEG = /not interested|no answer|call busy|busy|declined|lost|reject/i;
     const tmap = {};
-    live("activity").filter((a) => isNum(a.Date) && a.Date >= t - 14 && a.Outcome && POS.test(a.Outcome) && !NEG.test(a.Outcome))
+    live("activity").filter((a) => isNum(a.Date) && a.Date >= t - 14)
       .sort((a, b) => (a.Date || 0) - (b.Date || 0))
-      .forEach((a) => { const k = a.Account || a["Deal ID"] || ""; if (!k) return; if (dashScope !== "all" && !scopeAccts.has(a.Account)) return; tmap[k] = { name: a.Account || a["Deal ID"], outcome: a.Outcome, note: a.Notes, date: a.Date, go: a["Deal ID"] ? "#/deal/" + encodeURIComponent(a["Deal ID"]) : "" }; });
+      .forEach((a) => { const k = a.Account || a["Deal ID"] || ""; if (!k) return; if (dashScope !== "all" && !scopeAccts.has(a.Account)) return; tmap[k] = { name: a.Account || a["Deal ID"], outcome: a.Outcome || a.Channel || "Updated", note: a.Notes, date: a.Date, pos: POS.test(a.Outcome || ""), go: a["Deal ID"] ? "#/deal/" + encodeURIComponent(a["Deal ID"]) : "" }; });
     const traction = Object.values(tmap);
-    live("leads").filter((l) => /positive/i.test(l.Response || "") && isNum(l["Last Follow-up"]) && l["Last Follow-up"] >= t - 14)
-      .forEach((l) => traction.push({ name: (l.Name || l.Organization || "lead") + (l.Organization && l.Name ? " · " + l.Organization : ""), outcome: "Positive (lead)", note: l.Comments, date: l["Last Follow-up"], go: "#/leads" }));
+    live("leads").filter((l) => isNum(l["Last Follow-up"]) && l["Last Follow-up"] >= t - 14)
+      .forEach((l) => traction.push({ name: (l.Name || l.Organization || "lead") + (l.Organization && l.Name ? " · " + l.Organization : ""), outcome: l.Response || "Lead update", note: l.Comments, date: l["Last Follow-up"], pos: /positive/i.test(l.Response || ""), go: "#/leads" }));
     traction.sort((a, b) => (b.date || 0) - (a.date || 0));
     const tractionRow = (x) => `<div class="lrow" ${x.go ? `data-go="${x.go}"` : ""}>
-      <span class="dotT Hot" style="flex:none"></span>
-      <div class="lmain"><div class="lt1">${esc(x.name)}</div><div class="lmeta">✅ ${esc(x.outcome)}${x.note ? " · " + esc(String(x.note).slice(0, 70)) : ""}</div></div>
+      <span class="dotT ${x.pos ? "Hot" : "Cool"}" style="flex:none"></span>
+      <div class="lmain"><div class="lt1">${esc(x.name)}</div><div class="lmeta">${x.pos ? "✅ " : ""}${esc(x.outcome)}${x.note ? " · " + esc(String(x.note).slice(0, 70)) : ""}</div></div>
       <span class="lwhen">${esc(D.fmt(x.date, { abs: 1 }))}</span></div>`;
     const hot = ds.filter(({ r, x }) => x.open && r.Temperature === "Hot").length;
     const out = outreachWeek(D.weekStart(t));
@@ -607,7 +608,7 @@
   function gccDash(ds) {
     const gf = ds.filter((d) => gccType(d.r) === "Greenfield");
     const bf = ds.filter((d) => gccType(d.r) === "Brownfield");
-    const overdue = ds.filter((d) => d.x.follow === "Overdue").sort((a, b) => b.x.score - a.x.score);
+    const overdue = ds.filter((d) => d.x.follow === "Overdue").sort((a, b) => (b.r["Next Step Date"] || 0) - (a.r["Next Step Date"] || 0));
     const due = ds.filter((d) => ["Due today", "This week"].includes(d.x.follow)).sort((a, b) => a.r["Next Step Date"] - b.r["Next Step Date"]);
     const noNext = ds.filter((d) => d.x.open && d.x.follow === "No next step").sort((a, b) => b.x.score - a.x.score);
     const followDue = overdue.length + due.length;
@@ -1620,6 +1621,10 @@
     const touchLeads = live("leads").filter((l) => isNum(l["Last Follow-up"]) && l["Last Follow-up"] >= sSer && l["Last Follow-up"] <= eSer)
       .map((l) => ({ name: l.Name || l.Organization || "(lead)", org: l.Organization, resp: l.Response, note: String(l.Comments || "").trim(), nf: l["Next Follow-up"] }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    // Delivery candidates you updated in this period (Last Follow-up in range)
+    const touchCands = live("delivery").filter((c) => isNum(c["Last Follow-up"]) && c["Last Follow-up"] >= sSer && c["Last Follow-up"] <= eSer)
+      .map((c) => ({ name: c.Candidate || c.Name || "(candidate)", role: c.Role, client: c.Client, status: c.Status, note: String(c.Notes || "").split("|")[0].trim(), nf: c["Next Follow-up"] }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
     const sumLines = [], sumNotes = [];
     { const ch = {}; let resp = 0, mtg = 0; const accs = new Set();
       acts.forEach((a) => { const c = a.Channel || "Other"; ch[c] = (ch[c] || 0) + 1; const oc = String(a.Outcome || ""); if (oc && !/no answer|call busy/i.test(oc)) resp++; if (/meeting/i.test(oc)) mtg++; if (a.Account) accs.add(a.Account); if (a.Notes && String(a.Notes).trim()) sumNotes.push(`${a.Account ? a.Account + " — " : ""}${String(a.Notes).trim()}`); });
@@ -1644,18 +1649,22 @@
       <div style="display:flex;justify-content:space-between;gap:8px"><b style="font-size:13.5px">${esc(name)}</b>${isNum(nf) ? `<span style="font-size:11px;color:var(--ink-3);white-space:nowrap">f/u ${esc(D.fmt(nf, { abs: 1 }))}</span>` : ""}</div>
       ${line ? `<div style="font-size:12px;color:var(--ink-2);margin-top:2px">${esc(line)}</div>` : ""}
       ${note ? `<div style="font-size:12px;color:var(--ink-3);margin-top:2px">${esc(note)}</div>` : ""}</div>`;
-    const glanceHtml = (touchAccts.length || touchLeads.length) ? `
-      ${touchAccts.length ? `<div style="font-size:12px;color:var(--ink-3);margin:10px 0 0;font-weight:800;text-transform:uppercase;letter-spacing:.04em">Accounts touched · ${touchAccts.length}</div>
-        ${touchAccts.map((g) => glanceRow(g.name, [[...g.modes].join("/"), g.outcome, g.contacts.size ? [...g.contacts][0] : ""].filter(Boolean).join(" · "), g.note, g.nf)).join("")}` : ""}
-      ${touchLeads.length ? `<div style="font-size:12px;color:var(--ink-3);margin:12px 0 0;font-weight:800;text-transform:uppercase;letter-spacing:.04em">Leads touched · ${touchLeads.length}</div>
-        ${touchLeads.map((l) => glanceRow(l.name + (l.org ? " (" + l.org + ")" : ""), l.resp || "", l.note, l.nf)).join("")}` : ""}` : "";
+    const glanceHd = (txt, n) => `<div style="font-size:12px;color:var(--ink-3);margin:12px 0 0;font-weight:800;text-transform:uppercase;letter-spacing:.04em">${txt} · ${n}</div>`;
+    const glanceHtml = (touchAccts.length || touchLeads.length || touchCands.length) ? `
+      ${touchAccts.length ? glanceHd("Accounts touched", touchAccts.length) +
+        touchAccts.map((g) => glanceRow(g.name, [[...g.modes].join("/"), g.outcome, g.contacts.size ? [...g.contacts][0] : ""].filter(Boolean).join(" · "), g.note, g.nf)).join("") : ""}
+      ${touchLeads.length ? glanceHd("Leads touched", touchLeads.length) +
+        touchLeads.map((l) => glanceRow(l.name + (l.org ? " (" + l.org + ")" : ""), l.resp || "", l.note, l.nf)).join("") : ""}
+      ${touchCands.length ? glanceHd("Candidates touched (delivery)", touchCands.length) +
+        touchCands.map((c) => glanceRow(c.name, [c.role, c.client, c.status].filter(Boolean).join(" · "), c.note, c.nf)).join("") : ""}` : "";
     const summaryCard = total ? `<div class="sec"><h2>Summary — ${esc(modeLabel)}</h2></div>
       <div class="card">${sumLines.map((l) => `<div style="margin-bottom:6px">${esc(l)}</div>`).join("") || '<div class="hint">Activity recorded — see the list below.</div>'}
       ${glanceHtml}
       <button class="btn block" id="copysum" style="margin-top:12px">${I.copy} Copy summary for leadership</button>
       ${aiOn() ? `<button class="btn pri block" id="aisum" style="margin-top:8px">✨ AI summary & advice</button><div id="aiout"></div>` : ""}</div>` : "";
     const glanceText = () => (touchAccts.length ? "\nAccounts touched (" + touchAccts.length + "):\n" + touchAccts.map((g) => `• ${g.name} — ${[[...g.modes].join("/"), g.outcome].filter(Boolean).join(", ")}${g.note ? " — " + g.note : ""}${isNum(g.nf) ? " (next " + D.fmt(g.nf, { abs: 1 }) + ")" : ""}`).join("\n") : "")
-      + (touchLeads.length ? "\n\nLeads touched (" + touchLeads.length + "):\n" + touchLeads.map((l) => `• ${l.name}${l.org ? " (" + l.org + ")" : ""}${l.note ? " — " + l.note : ""}${isNum(l.nf) ? " (next " + D.fmt(l.nf, { abs: 1 }) + ")" : ""}`).join("\n") : "");
+      + (touchLeads.length ? "\n\nLeads touched (" + touchLeads.length + "):\n" + touchLeads.map((l) => `• ${l.name}${l.org ? " (" + l.org + ")" : ""}${l.note ? " — " + l.note : ""}${isNum(l.nf) ? " (next " + D.fmt(l.nf, { abs: 1 }) + ")" : ""}`).join("\n") : "")
+      + (touchCands.length ? "\n\nCandidates touched (" + touchCands.length + "):\n" + touchCands.map((c) => `• ${c.name} — ${[c.role, c.client, c.status].filter(Boolean).join(", ")}${c.note ? " — " + c.note : ""}`).join("\n") : "");
     const summaryText = () => `${modeLabel} · ${rangeText}\n` + (sumLines.length ? sumLines.map((l) => "• " + l).join("\n") : "• Activity recorded.") + glanceText();
     const dayBlock = (dd) => `<div class="sec"><h2>${esc(dayLabel(dd.d))}</h2><span class="count">${dd.e.length}</span></div>
       <div class="card" style="padding:0;overflow:hidden">${dd.e.map((e) => `<div style="display:flex;gap:10px;padding:10px 13px;border-top:1px solid var(--b)"><div style="font-variant-numeric:tabular-nums;color:var(--ink-3);font-size:12px;flex:none;width:46px">${e.noTime ? "" : fmtT(e.t)}</div><div style="font-size:13.5px">${esc(e.x)}</div></div>`).join("")}</div>`;
@@ -1905,11 +1914,13 @@
       mount: (el) => {
         $('.chips[data-name="theme"]', el).addEventListener("pick", (e) => { const v = e.detail; if (v) { localStorage.setItem("pp.theme", v); document.documentElement.setAttribute("data-theme", v); } else { localStorage.removeItem("pp.theme"); document.documentElement.removeAttribute("data-theme"); } });
         const box = $("#ttbox", el);
-        const autoRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttauto" ${ttAutoOn() ? "checked" : ""}> Auto-sync with TickTick (push on save + pull on open) <span class="hint">(off = fastest &amp; safest: your sheet edits are never overwritten by TickTick. Use the buttons above to sync on demand.)</span></label>`;
-        const pauseRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpause" ${ttPaused() ? "checked" : ""}> Pause ALL TickTick sync (push & pull)</label>`;
+        const autoRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpush" ${ttPushOn() ? "checked" : ""}> Auto-send updates to TickTick <span class="hint">(pushed automatically ~15s after you save, so it never slows a save)</span></label>
+          <label class="fchk" style="margin-top:8px"><input type="checkbox" id="ttpull" ${ttPullOn() ? "checked" : ""}> Auto-pull changes from TickTick on open <span class="hint">(leave OFF — pulling can overwrite a date you changed in the sheet; use the button to pull on demand)</span></label>`;
+        const pauseRow = () => `<label class="fchk" style="margin-top:10px"><input type="checkbox" id="ttpause" ${ttPaused() ? "checked" : ""}> Pause ALL TickTick sync</label>`;
         const wirePause = () => {
           const p = $("#ttpause", el); if (p) p.onchange = () => { try { localStorage.setItem("pp.ttpause", p.checked ? "1" : "0"); } catch (e) {} toast(p.checked ? "TickTick paused" : "TickTick resumed"); };
-          const a = $("#ttauto", el); if (a) a.onchange = () => { try { localStorage.setItem("pp.ttauto", a.checked ? "1" : "0"); } catch (e) {} toast(a.checked ? "Auto-send to TickTick ON" : "Auto-send OFF — use the TickTick button"); };
+          const a = $("#ttpush", el); if (a) a.onchange = () => { try { localStorage.setItem("pp.ttpush", a.checked ? "1" : "0"); } catch (e) {} toast(a.checked ? "Auto-send to TickTick ON" : "Auto-send OFF"); };
+          const b2 = $("#ttpull", el); if (b2) b2.onchange = () => { try { localStorage.setItem("pp.ttpull", b2.checked ? "1" : "0"); } catch (e) {} toast(b2.checked ? "Auto-pull ON" : "Auto-pull OFF (safer)"); };
         };
         if (ttPaused()) { box.innerHTML = '<p>⏸ <b>TickTick is paused.</b> Only your Google Sheet sync is running. Uncheck below to resume.</p>' + pauseRow(); wirePause(); return; }
         const paint = (st) => {
@@ -1917,7 +1928,7 @@
           if (!st.configured) { box.innerHTML = 'Not set up yet. Add <b>TT_CLIENT_ID</b> / <b>TT_CLIENT_SECRET</b> in the Apps Script project, then redeploy. (See the setup notes.)' + pauseRow(); wirePause(); return; }
           if (!st.connected) { box.innerHTML = `<p>Not connected.</p><a class="btn pri" href="${esc(st.authUrl)}" target="_blank" rel="noopener">${I.tt}Connect TickTick</a>` + pauseRow(); wirePause(); return; }
           const exp = st.expiresAt ? new Date(st.expiresAt).toLocaleDateString("en-GB") : "";
-          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. ${ttAutoOn() ? "<b>Auto-sync is ON</b> — follow-ups push on save and pull on open." : "<b>Auto-sync is off</b> (recommended) — your sheet saves stay fast and your sheet edits are never overwritten. Use the buttons below to sync on demand."} Delivery is kept separate — it never goes to TickTick.</p>
+          box.innerHTML = `<p>✅ Connected${exp ? " · token valid to " + esc(exp) : ""}. ${ttPushOn() ? "<b>Auto-send is ON</b> — your follow-ups push to TickTick automatically a few seconds after you save." : "Auto-send is off — use <b>Push all</b> below to send on demand."} Delivery is kept separate — it never goes to TickTick.</p>
             <div class="acts" style="flex-wrap:wrap;gap:8px"><button class="btn pri" id="ttall">Push all follow-ups to TickTick</button><button class="btn" id="ttpull">Sync from TickTick</button><a class="btn" href="${esc(st.authUrl)}" target="_blank" rel="noopener">Reconnect</a></div>${autoRow()}${pauseRow()}`;
           $("#ttall", el).onclick = () => ttPushAll($("#ttall", el));
           $("#ttpull", el).onclick = () => ttPullAll($("#ttpull", el));
@@ -1952,6 +1963,7 @@
         case "newmeeting": return meetingForm(null, r);
         case "meeting": e.stopPropagation(); { const m = bySig("meetings", sig); return m && meetingForm(m); }
         case "held": e.stopPropagation(); { const m = bySig("meetings", sig); return m && markHeld(m); }
+        case "delmeet": e.stopPropagation(); { const m = bySig("meetings", sig); if (m && confirm("Delete this meeting with " + (m.Account || "") + "?")) { const chg = {}; S.tables.meetings.headers.filter((h) => !Store.isCalc(h)).forEach((h) => { if (m[h] !== "" && m[h] != null) chg[h] = ""; }); API.update("meetings", m, chg); toast("Meeting deleted"); render(); } return; }
         case "newprop": return propForm(null, r);
         case "prop": { const p = bySig("proposals", sig); return p && propForm(p); }
         case "newreq": return reqForm(null, r);
@@ -2168,7 +2180,7 @@
         <div style="font-size:14px;line-height:1.55">Actively working <b>${active.length}</b> candidate${active.length !== 1 ? "s" : ""} across <b>${actReqIds.size}</b> requirement${actReqIds.size !== 1 ? "s" : ""}, <b>${actClients.size}</b> account${actClients.size !== 1 ? "s" : ""}, <b>${actSpocs.size}</b> POC${actSpocs.size !== 1 ? "s" : ""}.</div>
         ${stageGlance ? `<div style="font-size:13px;color:var(--ink-2);margin-top:7px"><b>By stage:</b> ${esc(stageGlance)}</div>` : ""}
         <div style="font-size:13px;margin-top:7px"><b>Needs action:</b> ${needAttn.length} follow-up${needAttn.length !== 1 ? "s" : ""} due · ${ivWeek.length} interview${ivWeek.length !== 1 ? "s" : ""} this week · ${offers.length} offer${offers.length !== 1 ? "s" : ""} pending${offerStale.length ? ` <span style="color:#C0392B">(${offerStale.length} stale)</span>` : ""}</div>
-        <div class="acts" style="margin-top:10px"><button class="pri" data-act="dayrepcopy" style="padding:5px 11px;font-size:11.5px;border-radius:10px">${I.copy}<span class="lbl">Copy day report</span></button></div>
+        <div style="margin-top:10px"><button class="pri" data-act="dayrepcopy" style="padding:4px 9px;font-size:11px;border-radius:9px;display:inline-flex;align-items:center;gap:4px;width:auto">${I.copy} Copy</button></div>
       </div>
       <div class="kpis">
         <button class="kpi" data-scroll="rv-reqs"><div class="v">${openReqs.length}</div><div class="l">Open roles</div></button>
@@ -2334,12 +2346,12 @@
 
   function dLog(c) {
     sheet("Update · " + c.Candidate, `
-      <div class="f"><label>Quick move</label>${chips("stg", ["L1 Scheduled", "L1 FB Pending", "L2 Scheduled", "L2 FB Pending", "L3 Scheduled", "Final Select", "Offer Accepted", "On Hold", "Joined"], DSTATUS.includes(c.Status) ? c.Status : "")}</div>
+      <div class="f"><label>Quick move</label>${chips("stg", ["L1 - To Schedule", "L1 Scheduled", "L1 FB Pending", "L2 Scheduled", "L2 FB Pending", "L3 Scheduled", "Final Select", "Offer Accepted", "On Hold", "Joined"], DSTATUS.includes(c.Status) ? c.Status : "")}</div>
       ${select("Or pick any status", "status", DSTATUS, c.Status, false)}
       <div class="f2">${field("Interview date (if scheduled)", "iv", c["Interview Date"], "date")}${field("Interview time", "ivt", c["Interview Time"] || "", "time")}</div>
       ${field("Note (feedback / next step)", "notes", "", "textarea")}
       <div class="f"><label>Next follow-up</label>${dateChips("nf", c["Next Follow-up"])}</div>
-      <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal" checked></div>
+      <div class="toggle"><div><b>Add interview to Google Calendar</b><div class="hint">Only when an interview date is set</div></div><input type="checkbox" name="cal"></div>
       ${aiOn() ? `<button class="btn block" id="cmove" style="margin-bottom:8px">✨ Suggest next move</button><div id="cmoveout"></div>` : ""}
       <button class="btn pri block" id="save">Save</button>`, (el, close) => {
       wireDateChips(el);
@@ -2590,7 +2602,7 @@
       <nav class="bottom">
         <a href="#/today" data-nav="today">${I.today}Today</a><a href="#/pipeline" data-nav="pipeline">${I.board}Pipeline</a>
         <button class="fab" data-act="fab" aria-label="Quick add">+</button>
-        <a href="#/delivery" data-nav="delivery">${I.req}Delivery</a><a href="#/more" data-nav="more">${I.more}More</a>
+        <a href="#/delivery" data-nav="delivery">${I.req}Delivery</a><a href="#/daylog" data-nav="daylog">${I.stand}Activity</a><a href="#/more" data-nav="more">${I.more}More</a>
       </nav>`;
     $("#back").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/today"));
     $("#gsearch").onclick = globalSearch;
@@ -2646,9 +2658,13 @@
     await Store.refresh(cached);
     render();
     Store.flush();
-    setInterval(Store.poll, (C.pollSeconds || 20) * 1000);
-    // TickTick two-way: check connection once, then pull immediately on open and whenever
-    // the app returns to the foreground (throttled). Pushes happen automatically on edits.
+    setInterval(Store.poll, (C.pollSeconds || 15) * 1000);
+    // Sync automatically: flush pending writes and pull sheet changes whenever the app regains
+    // focus or comes back to the foreground — so you never have to press Sync.
+    const autoSync = () => { if (!document.hidden) { Store.flush(); Store.poll(); } };
+    window.addEventListener("focus", autoSync);
+    document.addEventListener("visibilitychange", autoSync);
+    // TickTick: check connection once; pull only if auto-pull is enabled (off by default).
     if (!B.demo) {
       ttRefreshState().then((s) => { if (s.connected) ttAutoPull(true); });
       document.addEventListener("visibilitychange", () => { if (!document.hidden) ttAutoPull(); });
